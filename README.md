@@ -82,4 +82,4 @@ A aplicação permite registrar compras de ingredientes, calcular automaticament
 👨‍💻 Autor
 
 Kelvin Rodrigues de Miranda
-Estudante de Análise e Desenvolvimento de Sistemas
+React/React Native Developer
