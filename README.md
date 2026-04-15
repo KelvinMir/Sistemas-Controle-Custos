@@ -2,6 +2,21 @@
 
 Sistema web desenvolvido para auxiliar no controle de custos de produção de bolos confeitados, considerando a variação de preços dos ingredientes ao longo do tempo.
 
+Este repositório foi reorganizado como um projeto React usando Vite. Arquivos principais:
+- [src/App.jsx](src/App.jsx)
+- [src/main.jsx](src/main.jsx)
+- [index.html](index.html)
+- [package.json](package.json)
+
+Instalação e execução (local):
+
+```bash
+npm install
+npm run dev
+```
+
+Abra o endereço mostrado no terminal (ex.: http://localhost:5173).
+
 📌 Sobre o projeto
 
 Este projeto foi criado com o objetivo de resolver um problema real:
