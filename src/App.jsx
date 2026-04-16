@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import React from "react";
-import { db } from "./db";
+import { db, syncFromFirestore, syncToFirestore, setupRealtimeSync, migrateToFirestore } from "./db";
 import Modal from "./components/Modal";
 
 
@@ -54,6 +54,10 @@ export default function App() {
 
   useEffect(() => {
     const carregarDados = async () => {
+      // Migrate and synchronize with Firebase if configured
+      await migrateToFirestore();
+      await syncFromFirestore();
+
       // Migra dados do localStorage para o IndexedDB na primeira vez
       const raw = localStorage.getItem("sistema_bolos");
       const jaTemDados = (await db.ingredientes.count()) > 0;
@@ -104,6 +108,9 @@ export default function App() {
       setPrecoBolo(cfgBolo?.valor || "");
       setPrecoFatia(cfgFatia?.valor || "");
       setFatiasPerBolo(cfgFatias?.valor || "");
+
+      // Configurar sincronização em tempo real
+      setupRealtimeSync();
     };
 
     carregarDados();
@@ -172,6 +179,9 @@ export default function App() {
       setCompras(prev => [...prev, { ...novaCompra, id: compraId }]);
     }
 
+    // Sincronizar com Firestore após salvar
+    await syncToFirestore();
+
     setNome("");
     setUnidade("kg");
     setPrecoCompra("");
@@ -230,6 +240,9 @@ export default function App() {
     const compraId = await db.compras.add(novaCompra);
     setCompras(prev => [...prev, { ...novaCompra, id: compraId }]);
     setCompraModalOpen(false);
+
+    // Sincronizar com Firestore após salvar
+    await syncToFirestore();
   };
 
   // 🔥 CORREÇÃO DEFINITIVA
@@ -273,11 +286,17 @@ export default function App() {
     const itemId = await db.receita.add(novoItem);
     setReceita(prev => [...prev, { ...novoItem, id: itemId }]);
     setUsarModalOpen(false);
+
+    // Sincronizar com Firestore após salvar
+    await syncToFirestore();
   };
 
   const removerDaReceita = async (itemId) => {
     await db.receita.delete(itemId);
     setReceita(prev => prev.filter(r => r.id !== itemId));
+
+    // Sincronizar com Firestore após remover
+    await syncToFirestore();
   };
 
   const salvarConfigsVendas = async () => {
@@ -350,6 +369,9 @@ export default function App() {
     setAnotacaoVenda("");
     setDataVenda(new Date().toISOString().split('T')[0]);
     setShowNovaVenda(false);
+
+    // Sincronizar com Firestore após salvar
+    await syncToFirestore();
   };
 
   const removerVenda = (vendaId) => {
@@ -384,6 +406,9 @@ export default function App() {
     setConfirmOpen(false);
     setConfirmAction(null);
     setConfirmData(null);
+
+    // Sincronizar com Firestore após alterações
+    await syncToFirestore();
   };
 
   const custoTotal = receita.reduce((acc, r) => acc + r.custo, 0);
