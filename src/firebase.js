@@ -1,42 +1,21 @@
-// firebase.js
-// Para configurar o Firebase:
-// 1. Acesse https://console.firebase.google.com/
-// 2. Crie um novo projeto
-// 3. Ative o Firestore Database
-// 4. Vá em Configurações do Projeto > Configuração do app > Web app
-// 5. Copie as configurações e substitua abaixo
+// Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+import { getAnalytics } from "firebase/analytics";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
 
-import { initializeApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
-
+// Your web app's Firebase configuration
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  // Substitua pelas suas configurações do Firebase Console
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyAkrGfhhaVUhBCqfYgYO0POEmVvXrCbs0Q",
+  authDomain: "solary-cacau.firebaseapp.com",
+  projectId: "solary-cacau",
+  storageBucket: "solary-cacau.firebasestorage.app",
+  messagingSenderId: "535166324354",
+  appId: "1:535166324354:web:b5d8f9e560f16c5b95ae9b",
+  measurementId: "G-8REDLV0MLH"
 };
 
-let dbFirestore = null;
-
-try {
-  // Only initialize Firebase if configuration is valid
-  const isConfigured = firebaseConfig.projectId && 
-                       firebaseConfig.projectId !== "YOUR_PROJECT_ID" &&
-                       firebaseConfig.apiKey !== "YOUR_API_KEY";
-  
-  if (isConfigured) {
-    const app = initializeApp(firebaseConfig);
-    dbFirestore = getFirestore(app);
-    console.log("Firebase initialized successfully");
-  } else {
-    console.log("Firebase not configured - app will work offline");
-  }
-} catch (error) {
-  console.error("Firebase initialization error:", error);
-  console.log("App will work offline with IndexedDB only");
-}
-
-export default dbFirestore;
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const analytics = getAnalytics(app);
