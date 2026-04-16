@@ -5,4 +5,10 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   base: '/Sistemas-Controle-Custos/',
+  css: {
+    postcss: './postcss.config.js',
+  },
+  build: {
+    cssCodeSplit: false,
+  }
 })
