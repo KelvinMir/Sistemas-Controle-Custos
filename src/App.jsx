@@ -427,8 +427,8 @@ export default function App() {
     .reduce((acc, v) => acc + v.valor, 0);
 
   return (
-    <div className="min-h-screen flex flex-col bg-linear-to-br from-pink-50 via-purple-50 to-blue-50">
-      <header className="bg-linear-to-r from-pink-500 via-purple-500 to-blue-600 text-white shadow-xl">
+    <div className="min-h-screen flex flex-col bg-gradient-to-br from-pink-50 via-purple-50 to-blue-50">
+      <header className="bg-gradient-to-r from-pink-500 via-purple-500 to-blue-600 text-white shadow-xl">
         <div className="max-w-6xl mx-auto px-6 py-6 flex justify-between items-center gap-4">
           <div>
             <h1 className="text-3xl font-bold m-0">🎂 Solary Cacau</h1>
@@ -441,7 +441,7 @@ export default function App() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-6">
             <div className="card bg-white rounded-2xl shadow-lg border-2 border-pink-100 hover:shadow-xl transition-shadow">
-              <h2 className="font-bold text-xl mb-4 text-transparent bg-clip-text bg-linear-to-r from-pink-600 to-purple-600">📦 Ingrediente</h2>
+              <h2 className="font-bold text-xl mb-4 text-transparent bg-clip-text bg-gradient-to-r from-pink-600 to-purple-600">📦 Ingrediente</h2>
               <div className="grid grid-cols-5 gap-3">
                 <input className="input border-2 border-pink-200 focus:border-pink-500 placeholder-gray-400" placeholder="Nome" value={nome} onChange={e => setNome(e.target.value)} />
 
@@ -473,7 +473,7 @@ export default function App() {
             </div>
 
             <div className="card bg-white rounded-2xl shadow-lg border-2 border-purple-100 hover:shadow-xl transition-shadow">
-              <h2 className="font-bold text-xl mb-4 text-transparent bg-clip-text bg-linear-to-r from-purple-600 to-blue-600">🥄 Ingredientes</h2>
+              <h2 className="font-bold text-xl mb-4 text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-blue-600">🥄 Ingredientes</h2>
               {ingredientes.length === 0 ? (
                 <p className="text-sm text-gray-400 text-center py-8">Nenhum ingrediente cadastrado</p>
               ) : (
@@ -506,7 +506,7 @@ export default function App() {
           </div>
 
           <aside className="lg:col-span-1 space-y-6">
-            <div className="bg-linear-to-br from-pink-400 via-rose-400 to-orange-400 text-white rounded-2xl shadow-2xl p-6 border-2 border-rose-300">
+            <div className="bg-gradient-to-br from-pink-400 via-rose-400 to-orange-400 text-white rounded-2xl shadow-2xl p-6 border-2 border-rose-300">
               <h2 className="font-bold text-xl mb-4">💰 Resumo Financeiro</h2>
               <div className="space-y-3 text-sm font-semibold">
                 <div className="bg-white/20 rounded-lg p-3 backdrop-blur">
@@ -536,7 +536,7 @@ export default function App() {
             </div>
 
             <div className="card bg-white rounded-2xl shadow-lg border-2 border-blue-100 hover:shadow-xl transition-shadow">
-              <h2 className="font-bold text-lg mb-4 text-transparent bg-clip-text bg-linear-to-r from-blue-600 to-cyan-600">⚙️ Configurar Vendas</h2>
+              <h2 className="font-bold text-lg mb-4 text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-600">⚙️ Configurar Vendas</h2>
               <div className="space-y-3 mb-4">
                 <div>
                   <label className="text-xs font-semibold text-gray-600 block mb-1">Preço por kg (bolo inteiro)</label>
@@ -555,8 +555,8 @@ export default function App() {
             </div>
 
             {showNovaVenda ? (
-              <div className="card bg-linear-to-br from-amber-50 to-orange-50 rounded-2xl shadow-lg border-2 border-amber-200">
-                <h3 className="font-bold text-lg mb-4 text-transparent bg-clip-text bg-linear-to-r from-amber-600 to-orange-600">🛍️ Registrar Venda</h3>
+              <div className="card bg-gradient-to-br from-amber-50 to-orange-50 rounded-2xl shadow-lg border-2 border-amber-200">
+                <h3 className="font-bold text-lg mb-4 text-transparent bg-clip-text bg-gradient-to-r from-amber-600 to-orange-600">🛍️ Registrar Venda</h3>
                 <div className="flex gap-3 mb-4">
                   <label className="flex-1 flex items-center gap-2 cursor-pointer p-3 bg-white rounded-lg border-2 border-amber-200 hover:border-amber-400 transition">
                     <input type="radio" value="fatias" checked={tipoVenda === "fatias"} onChange={e => setTipoVenda(e.target.value)} name="tipoVenda" className="accent-amber-500" />
@@ -586,7 +586,7 @@ export default function App() {
             )}
 
             <div className="card bg-white rounded-2xl shadow-lg border-2 border-green-100 hover:shadow-xl transition-shadow">
-              <h3 className="font-bold text-lg mb-4 text-transparent bg-clip-text bg-linear-to-r from-green-600 to-emerald-600">📋 Vendas Realizadas</h3>
+              <h3 className="font-bold text-lg mb-4 text-transparent bg-clip-text bg-gradient-to-r from-green-600 to-emerald-600">📋 Vendas Realizadas</h3>
               {vendas.length === 0 ? (
                 <p className="text-sm text-gray-400 text-center py-8">Nenhuma venda registrada</p>
               ) : (
@@ -611,7 +611,7 @@ export default function App() {
             </div>
 
             <div className="card bg-white rounded-2xl shadow-lg border-2 border-indigo-100 hover:shadow-xl transition-shadow">
-              <h3 className="font-bold text-lg mb-4 text-transparent bg-clip-text bg-linear-to-r from-indigo-600 to-purple-600">🧁 Ingredientes na Receita</h3>
+              <h3 className="font-bold text-lg mb-4 text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600">🧁 Ingredientes na Receita</h3>
               {receita.length === 0 ? (
                 <p className="text-sm text-gray-400 text-center py-8">Sem itens na receita</p>
               ) : (
@@ -684,9 +684,9 @@ export default function App() {
         </div>
       </Modal>
 
-      <footer className="bg-linear-to-r from-pink-100 via-purple-100 to-blue-100 border-t-4 border-pink-400 py-6">
+      <footer className="bg-gradient-to-r from-pink-100 via-purple-100 to-blue-100 border-t-4 border-pink-400 py-6">
         <div className="max-w-6xl mx-auto px-6 text-center">
-          <p className="text-transparent bg-clip-text bg-linear-to-r from-pink-600 to-purple-600 font-bold">🎂 Feito com ❤️ para minha confeiteira predileta!</p>
+          <p className="text-transparent bg-clip-text bg-gradient-to-r from-pink-600 to-purple-600 font-bold">🎂 Feito com ❤️ para minha confeiteira predileta!</p>
           <p className="text-xs text-gray-600 mt-1">Sistema de Controle de Custos • v1.0</p>
         </div>
       </footer>
