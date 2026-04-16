@@ -1,5 +1,5 @@
 import Dexie from "dexie";
-import { dbFirestore } from "./firebase";
+import dbFirestore from "./firebase";
 import { collection, getDocs, setDoc, doc, onSnapshot } from "firebase/firestore";
 
 // Verificar se Firebase está configurado

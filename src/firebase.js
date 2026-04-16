@@ -19,5 +19,24 @@ const firebaseConfig = {
   appId: "YOUR_APP_ID"
 };
 
-const app = initializeApp(firebaseConfig);
-export const dbFirestore = getFirestore(app);
+let dbFirestore = null;
+
+try {
+  // Only initialize Firebase if configuration is valid
+  const isConfigured = firebaseConfig.projectId && 
+                       firebaseConfig.projectId !== "YOUR_PROJECT_ID" &&
+                       firebaseConfig.apiKey !== "YOUR_API_KEY";
+  
+  if (isConfigured) {
+    const app = initializeApp(firebaseConfig);
+    dbFirestore = getFirestore(app);
+    console.log("Firebase initialized successfully");
+  } else {
+    console.log("Firebase not configured - app will work offline");
+  }
+} catch (error) {
+  console.error("Firebase initialization error:", error);
+  console.log("App will work offline with IndexedDB only");
+}
+
+export default dbFirestore;
