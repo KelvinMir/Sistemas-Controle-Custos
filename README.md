@@ -47,7 +47,9 @@ A aplicação permite registrar compras de ingredientes, calcular automaticament
 	React
 	Tailwind CSS
 	JavaScript (ES6+)
-	LocalStorage
+	IndexedDB (via Dexie)
+	Firebase Firestore (para sincronização entre dispositivos)
+
 📂 Estrutura do projeto
 	src/
 	 ├── App.jsx
