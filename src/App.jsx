@@ -310,6 +310,7 @@ export default function App() {
       precoFatia && db.config.put({ chave: "precoFatia", valor: parseNumero(precoFatia) }),
       fatiasPerBolo && db.config.put({ chave: "fatiasPerBolo", valor: parseNumero(fatiasPerBolo) }),
     ]);
+    await syncToFirestore();
     alert("Configurações de vendas salvas!");
   };
 

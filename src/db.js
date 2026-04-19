@@ -1,57 +1,73 @@
 import Dexie from "dexie";
 import dbFirestore from "./firebase";
-import { collection, getDocs, setDoc, doc, onSnapshot } from "firebase/firestore";
+import { collection, deleteDoc, getDocs, setDoc, doc, onSnapshot } from "firebase/firestore";
 
-// Verificar se Firebase está configurado
+const collections = ["ingredientes", "compras", "receita", "vendas", "config"];
+
 const isFirebaseConfigured = () => {
   return dbFirestore && typeof dbFirestore !== 'undefined';
+};
+
+const normalizeId = (id) => {
+  const numericId = Number(id);
+  return Number.isSafeInteger(numericId) && String(numericId) === String(id)
+    ? numericId
+    : id;
+};
+
+const getFirestoreDocumentId = (item) => {
+  const id = item.id ?? item.chave;
+  return id === undefined || id === null ? null : String(id);
+};
+
+const normalizeFirestoreDoc = (coll, snapshotDoc) => {
+  const data = snapshotDoc.data();
+
+  if (coll === "config") {
+    return data.chave ? data : { ...data, chave: snapshotDoc.id };
+  }
+
+  return {
+    ...data,
+    id: data.id ?? normalizeId(snapshotDoc.id),
+  };
+};
+
+const replaceLocalCollection = async (coll, data) => {
+  await db[coll].clear();
+  if (data.length > 0) {
+    await db[coll].bulkPut(data);
+  }
 };
 
 export const db = new Dexie("ControleCustos");
 
 db.version(1).stores({
-  // 'id' = chave primária fornecida pelo app (Date.now())
   ingredientes: "id, nome, unidade",
-
-  // '++id' = auto-incremento; ingredienteId e data são indexados para buscas
   compras: "++id, ingredienteId, data",
-
-  // '++id' = auto-incremento
   receita: "++id, data",
-
-  // '++id' = auto-incremento; data para filtro de período
   vendas: "++id, data",
-
-  // chave = primary key (ex: "precoVenda", "precoBolo", "precoFatia", etc)
   config: "chave",
 });
 
-// Função para sincronizar dados do Firestore para IndexedDB
 export const syncFromFirestore = async () => {
   if (!isFirebaseConfigured()) return;
   try {
-    const collections = ['ingredientes', 'compras', 'receita', 'vendas', 'config'];
     for (const coll of collections) {
       const querySnapshot = await getDocs(collection(dbFirestore, coll));
-      const data = [];
-      querySnapshot.forEach((doc) => {
-        data.push({ ...doc.data(), id: doc.id });
-      });
-      if (data.length > 0) {
-        await db[coll].bulkPut(data);
-      }
+      const data = querySnapshot.docs.map((snapshotDoc) =>
+        normalizeFirestoreDoc(coll, snapshotDoc)
+      );
+      await replaceLocalCollection(coll, data);
     }
   } catch (error) {
     console.error("Erro ao sincronizar do Firestore:", error);
   }
 };
 
-// Função para migrar dados locais para Firestore na primeira vez
 export const migrateToFirestore = async () => {
   if (!isFirebaseConfigured()) return;
   try {
-    // Verifica se já há dados no Firestore
-    const collections = ['ingredientes', 'compras', 'receita', 'vendas', 'config'];
     let hasDataInFirestore = false;
     for (const coll of collections) {
       const querySnapshot = await getDocs(collection(dbFirestore, coll));
@@ -62,7 +78,6 @@ export const migrateToFirestore = async () => {
     }
 
     if (!hasDataInFirestore) {
-      // Não há dados no Firestore, migra dos dados locais
       console.log("Migrando dados locais para Firestore...");
       await syncToFirestore();
       console.log("Migração concluída!");
@@ -72,16 +87,31 @@ export const migrateToFirestore = async () => {
   }
 };
 
-// Função para sincronizar dados do IndexedDB para Firestore
 export const syncToFirestore = async () => {
   if (!isFirebaseConfigured()) return;
   try {
-    const collections = ['ingredientes', 'compras', 'receita', 'vendas', 'config'];
     for (const coll of collections) {
       const data = await db[coll].toArray();
+      const localDocumentIds = new Set();
+
       for (const item of data) {
-        const docRef = doc(dbFirestore, coll, item.id || item.chave);
+        const documentId = getFirestoreDocumentId(item);
+
+        if (!documentId) {
+          console.warn(`Item sem id/chave ignorado na sincronização de ${coll}:`, item);
+          continue;
+        }
+
+        localDocumentIds.add(documentId);
+        const docRef = doc(dbFirestore, coll, documentId);
         await setDoc(docRef, item);
+      }
+
+      const querySnapshot = await getDocs(collection(dbFirestore, coll));
+      for (const snapshotDoc of querySnapshot.docs) {
+        if (!localDocumentIds.has(snapshotDoc.id)) {
+          await deleteDoc(doc(dbFirestore, coll, snapshotDoc.id));
+        }
       }
     }
   } catch (error) {
@@ -89,17 +119,20 @@ export const syncToFirestore = async () => {
   }
 };
 
-// Configurar listeners em tempo real para sincronização automática
 export const setupRealtimeSync = () => {
   if (!isFirebaseConfigured()) return;
-  const collections = ['ingredientes', 'compras', 'receita', 'vendas', 'config'];
   collections.forEach(coll => {
-    onSnapshot(collection(dbFirestore, coll), (querySnapshot) => {
-      const data = [];
-      querySnapshot.forEach((doc) => {
-        data.push({ ...doc.data(), id: doc.id });
-      });
-      db[coll].bulkPut(data);
-    });
+    onSnapshot(
+      collection(dbFirestore, coll),
+      async (querySnapshot) => {
+        const data = querySnapshot.docs.map((snapshotDoc) =>
+          normalizeFirestoreDoc(coll, snapshotDoc)
+        );
+        await replaceLocalCollection(coll, data);
+      },
+      (error) => {
+        console.error(`Erro no listener do Firestore (${coll}):`, error);
+      }
+    );
   });
 };
