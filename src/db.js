@@ -2,7 +2,7 @@ import Dexie from "dexie";
 import dbFirestore from "./firebase";
 import { collection, deleteDoc, getDocs, setDoc, doc, onSnapshot } from "firebase/firestore";
 
-const collections = ["ingredientes", "compras", "receita", "vendas", "config"];
+const collections = ["ingredientes", "compras", "receita", "receitas", "vendas", "config"];
 
 const isFirebaseConfigured = () => {
   return dbFirestore && typeof dbFirestore !== 'undefined';
@@ -48,6 +48,33 @@ db.version(1).stores({
   receita: "++id, data",
   vendas: "++id, data",
   config: "chave",
+});
+
+db.version(2).stores({
+  ingredientes: "id, nome, unidade",
+  compras: "++id, ingredienteId, data",
+  receita: "++id, receitaId, data",
+  receitas: "++id, nome, data",
+  vendas: "++id, data",
+  config: "chave",
+}).upgrade(async (tx) => {
+  const receitaTable = tx.table("receita");
+  const receitasTable = tx.table("receitas");
+  const itensReceita = await receitaTable.toArray();
+
+  if (itensReceita.length === 0) return;
+
+  const receitaPadrao = {
+    nome: "Receita principal",
+    data: new Date().toISOString(),
+  };
+  const receitaPadraoId = await receitasTable.add(receitaPadrao);
+
+  await Promise.all(
+    itensReceita
+      .filter((item) => item.receitaId === undefined || item.receitaId === null)
+      .map((item) => receitaTable.update(item.id, { receitaId: receitaPadraoId }))
+  );
 });
 
 export const syncFromFirestore = async () => {

@@ -2,12 +2,16 @@ import { useState, useEffect } from "react";
 import React from "react";
 import { db, syncFromFirestore, syncToFirestore, setupRealtimeSync, migrateToFirestore } from "./db";
 import Modal from "./components/Modal";
+import sunflowerIcon from "./img/sunflower-svgrepo-com.svg";
 
 
 export default function App() {
   const [ingredientes, setIngredientes] = useState([]);
   const [compras, setCompras] = useState([]);
   const [receita, setReceita] = useState([]);
+  const [receitas, setReceitas] = useState([]);
+  const [receitaSelecionadaId, setReceitaSelecionadaId] = useState(null);
+  const [nomeReceita, setNomeReceita] = useState("");
 
   const [nome, setNome] = useState("");
   const [unidade, setUnidade] = useState("kg");
@@ -42,6 +46,7 @@ export default function App() {
   const [precoBolo, setPrecoBolo] = useState("");
   const [precoFatia, setPrecoFatia] = useState("");
   const [fatiasPerBolo, setFatiasPerBolo] = useState("");
+  const [showConfigVendas, setShowConfigVendas] = useState(false);
   const [vendas, setVendas] = useState([]);
   const [showNovaVenda, setShowNovaVenda] = useState(false);
   const [tipoVenda, setTipoVenda] = useState("fatias"); // "fatias" ou "bolo"
@@ -85,17 +90,52 @@ export default function App() {
         localStorage.removeItem("sistema_bolos");
       }
 
-      const [ings, comps, rec, cfg, vends] = await Promise.all([
+      let [ings, comps, rec, receitasData, cfg, vends] = await Promise.all([
         db.ingredientes.toArray(),
         db.compras.toArray(),
         db.receita.toArray(),
+        db.receitas.toArray(),
         db.config.get("precoVenda"),
         db.vendas.toArray(),
       ]);
 
+      let deveSincronizarReceitas = false;
+
+      if (receitasData.length === 0) {
+        const receitaPadrao = {
+          nome: "Receita principal",
+          data: new Date().toISOString(),
+        };
+        const receitaPadraoId = await db.receitas.add(receitaPadrao);
+        receitasData = [{ ...receitaPadrao, id: receitaPadraoId }];
+        deveSincronizarReceitas = true;
+      }
+
+      const receitaPadraoId = receitasData[0]?.id;
+      const itensSemReceita = rec.filter(r => r.receitaId === undefined || r.receitaId === null);
+
+      if (receitaPadraoId && itensSemReceita.length > 0) {
+        await Promise.all(
+          itensSemReceita.map(item =>
+            db.receita.update(item.id, {
+              receitaId: receitaPadraoId,
+              receitaNome: receitasData[0].nome,
+            })
+          )
+        );
+        rec = await db.receita.toArray();
+        deveSincronizarReceitas = true;
+      }
+
+      if (deveSincronizarReceitas) {
+        await syncToFirestore();
+      }
+
       setIngredientes(ings);
       setCompras(comps);
       setReceita(rec);
+      setReceitas(receitasData);
+      setReceitaSelecionadaId(receitaPadraoId || null);
       setPrecoVenda(cfg?.valor || "");
       setVendas(vends);
 
@@ -109,14 +149,12 @@ export default function App() {
       setPrecoFatia(cfgFatia?.valor || "");
       setFatiasPerBolo(cfgFatias?.valor || "");
 
-      // Configurar sincronização em tempo real
       setupRealtimeSync();
     };
 
     carregarDados();
   }, []);
 
-  // 🔥 normaliza número (corrige vírgula brasileira)
   const parseNumero = (valor) => {
     if (!valor) return 0;
     return Number(String(valor).replace(",", "."));
@@ -133,7 +171,7 @@ export default function App() {
       const ing = ingredientes[editIndex];
       await db.ingredientes.update(ing.id, { nome, unidade });
       setIngredientes(prev => prev.map((item, i) => i === editIndex ? { ...item, nome, unidade } : item));
-      // Se usuário informou preço/quantidade no formulário ao editar, registra como nova compra
+
       const precoFinalEdit = usePrecoPorUnidade && precoUnitNum > 0 ? precoUnitNum * qtdNum : precoNum;
       if (precoFinalEdit > 0 && qtdNum > 0) {
         let quantidadeArmazenada = qtdNum;
@@ -150,7 +188,7 @@ export default function App() {
       }
       setEditIndex(null);
     } else {
-      // Novo ingrediente: valida se há preço/quantidade inicial
+
       const precoFinal = usePrecoPorUnidade && precoUnitNum > 0 ? precoUnitNum * qtdNum : precoNum;
       const temPreco = precoFinal > 0 && qtdNum > 0;
       
@@ -179,7 +217,6 @@ export default function App() {
       setCompras(prev => [...prev, { ...novaCompra, id: compraId }]);
     }
 
-    // Sincronizar com Firestore após salvar
     await syncToFirestore();
 
     setNome("");
@@ -241,11 +278,9 @@ export default function App() {
     setCompras(prev => [...prev, { ...novaCompra, id: compraId }]);
     setCompraModalOpen(false);
 
-    // Sincronizar com Firestore após salvar
     await syncToFirestore();
   };
 
-  // 🔥 CORREÇÃO DEFINITIVA
   const custoMedio = (ingredienteId) => {
     const lista = compras.filter(c => c.ingredienteId === ingredienteId);
 
@@ -258,6 +293,12 @@ export default function App() {
   };
 
   const adicionarNaReceita = (ingrediente) => {
+    if (!receitaSelecionadaId) {
+      setAlertMessage("Crie ou selecione uma receita antes de adicionar ingredientes.");
+      setAlertOpen(true);
+      return;
+    }
+
     setUsarModalIngrediente(ingrediente);
     setUsarModalQtd("");
     setTimeout(() => setUsarModalOpen(true), 0);
@@ -266,6 +307,8 @@ export default function App() {
   const adicionarNaReceitaExec = async () => {
     const ingrediente = usarModalIngrediente;
     if (!ingrediente) return;
+    const receitaAtual = receitas.find(r => String(r.id) === String(receitaSelecionadaId));
+    if (!receitaAtual) return setAlertMessage("Selecione uma receita para adicionar este ingrediente."), setAlertOpen(true);
     const qtd = parseNumero(usarModalQtd);
     if (!qtd) return setAlertMessage("Informe a quantidade usada."), setAlertOpen(true);
 
@@ -276,6 +319,8 @@ export default function App() {
     const custo = qtdNormalizada * custoUnitario;
 
     const novoItem = {
+      receitaId: receitaAtual.id,
+      receitaNome: receitaAtual.nome,
       nome: ingrediente.nome,
       qtd: qtdNormalizada,
       unidade: ingrediente.unidade === "g" ? "kg" : ingrediente.unidade,
@@ -287,7 +332,6 @@ export default function App() {
     setReceita(prev => [...prev, { ...novoItem, id: itemId }]);
     setUsarModalOpen(false);
 
-    // Sincronizar com Firestore após salvar
     await syncToFirestore();
   };
 
@@ -295,7 +339,29 @@ export default function App() {
     await db.receita.delete(itemId);
     setReceita(prev => prev.filter(r => r.id !== itemId));
 
-    // Sincronizar com Firestore após remover
+    await syncToFirestore();
+  };
+
+  const criarReceita = async () => {
+    const nomeNormalizado = nomeReceita.trim();
+
+    if (!nomeNormalizado) {
+      setAlertMessage("Informe o nome da receita.");
+      setAlertOpen(true);
+      return;
+    }
+
+    const novaReceita = {
+      nome: nomeNormalizado,
+      data: new Date().toISOString(),
+    };
+    const receitaId = await db.receitas.add(novaReceita);
+    const receitaComId = { ...novaReceita, id: receitaId };
+
+    setReceitas(prev => [...prev, receitaComId]);
+    setReceitaSelecionadaId(receitaId);
+    setNomeReceita("");
+
     await syncToFirestore();
   };
 
@@ -311,6 +377,7 @@ export default function App() {
       fatiasPerBolo && db.config.put({ chave: "fatiasPerBolo", valor: parseNumero(fatiasPerBolo) }),
     ]);
     await syncToFirestore();
+    setShowConfigVendas(false);
     alert("Configurações de vendas salvas!");
   };
 
@@ -329,11 +396,11 @@ export default function App() {
       const valor = parseNumero(valorVenda);
 
       if (valor > 0) {
-        // Uso valor informado
+
         valorFinal = valor;
         descricao = `${qtd} fatia(s) - valor total R$ ${valor.toFixed(2)}`;
       } else if (precoFatia) {
-        // Usa preço padrão da fatia
+
         valorFinal = qtd * parseNumero(precoFatia);
         descricao = `${qtd} fatia(s) R$ ${parseNumero(precoFatia).toFixed(2)}`;
       } else {
@@ -342,7 +409,7 @@ export default function App() {
         return;
       }
     } else {
-      // Bolo inteiro — preço por kg
+
       const qtd = parseNumero(qtdVenda);
       if (precoBolo) {
         valorFinal = qtd * parseNumero(precoBolo);
@@ -371,7 +438,6 @@ export default function App() {
     setDataVenda(new Date().toISOString().split('T')[0]);
     setShowNovaVenda(false);
 
-    // Sincronizar com Firestore após salvar
     await syncToFirestore();
   };
 
@@ -408,11 +474,16 @@ export default function App() {
     setConfirmAction(null);
     setConfirmData(null);
 
-    // Sincronizar com Firestore após alterações
     await syncToFirestore();
   };
 
-  const custoTotal = receita.reduce((acc, r) => acc + r.custo, 0);
+  const receitaSelecionada = receitas.find(r => String(r.id) === String(receitaSelecionadaId)) || receitas[0] || null;
+  const receitaSelecionadaIdAtual = receitaSelecionada?.id ?? null;
+  const receitaPadraoIdAtual = receitas[0]?.id ?? receitaSelecionadaIdAtual;
+  const itensReceitaSelecionada = receita.filter(item =>
+    receitaSelecionadaIdAtual && String(item.receitaId ?? receitaPadraoIdAtual) === String(receitaSelecionadaIdAtual)
+  );
+  const custoTotal = itensReceitaSelecionada.reduce((acc, r) => acc + r.custo, 0);
   const vendaTotal = vendas.reduce((acc, v) => acc + v.valor, 0);
   const lucro = vendaTotal - custoTotal;
 
@@ -428,57 +499,62 @@ export default function App() {
     .reduce((acc, v) => acc + v.valor, 0);
 
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-br from-pink-50 via-purple-50 to-blue-50">
-      <header className="bg-gradient-to-r from-pink-500 via-purple-500 to-blue-600 text-white shadow-xl">
-        <div className="max-w-6xl mx-auto px-6 py-6 flex justify-between items-center gap-4">
-          <div>
-            <h1 className="text-3xl font-bold m-0">🎂 Solary Cacau</h1>
-            <p className="text-pink-100 text-sm m-0">Controle dos custos e receitas para suas encomendas</p>
+    <div className="min-h-screen flex flex-col bg-[#fff7fc] text-gray-900">
+      <header className="bg-gradient-to-r from-pink-500 via-purple-500 to-blue-600 text-white shadow-sm border-b border-white/20">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-5 flex sm:justify-between sm:items-center gap-2">
+          <div className="flex flex-grow items-center gap-3">
+            <img className="h-12 w-12" src={sunflowerIcon} alt="" />
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-bold m-0 text-white">
+                Solary Cacau
+              </h1>
+              <p className="text-white/85 text-sm m-0">Controle dos custos e receitas para suas encomendas</p>
+            </div>
           </div>
         </div>
       </header>
 
-      <main className="flex-1 mx-auto w-full px-6 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2 space-y-6">
-            <div className="card bg-white rounded-2xl shadow-lg border-2 border-pink-100 hover:shadow-xl transition-shadow">
-              <h2 className="font-bold text-xl mb-4 text-transparent bg-clip-text bg-gradient-to-r from-pink-600 to-purple-600">📦 Ingrediente</h2>
-              <div className="grid grid-cols-5 gap-3">
-                <input className="input border-2 border-pink-200 focus:border-pink-500 placeholder-gray-400" placeholder="Nome" value={nome} onChange={e => setNome(e.target.value)} />
+      <main className="flex-1 mx-auto w-full max-w-7xl px-4 sm:px-6 py-5 sm:py-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 lg:gap-6 items-start">
+          <div className="lg:col-span-2 space-y-5 lg:space-y-6">
+            <div className="card border border-rose-100/80 bg-white/95">
+              <h2 className="font-bold text-xl mb-4 text-rose-950">📦 Ingrediente</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
+                <input className="input border-2 border-rose-200 focus:border-rose-700 placeholder-gray-400" placeholder="Nome" value={nome} onChange={e => setNome(e.target.value)} />
 
-                <select className="input border-2 border-pink-200 focus:border-pink-500 bg-white" value={unidade} onChange={e => setUnidade(e.target.value)}>
+                <select className="input border-2 border-rose-200 focus:border-rose-700 bg-white" value={unidade} onChange={e => setUnidade(e.target.value)}>
                   <option value="kg">Kg</option>
                   <option value="un">Unidade</option>
                   <option value="pacote">Pacote</option>
                   <option value="litro">Litro</option>
                 </select>
 
-                <div className="border-2 border-pink-200 p-3 rounded-lg bg-pink-50">
+                <div className="border-2 border-rose-200 p-3 rounded-lg bg-rose-50/80 sm:col-span-2 xl:col-span-1">
                   <div className="flex gap-2 items-center mb-2">
-                    <input id="usePrecoPorUnidade" type="checkbox" checked={usePrecoPorUnidade} onChange={e => setUsePrecoPorUnidade(e.target.checked)} className="w-4 h-4 cursor-pointer accent-pink-500" />
+                    <input id="usePrecoPorUnidade" type="checkbox" checked={usePrecoPorUnidade} onChange={e => setUsePrecoPorUnidade(e.target.checked)} className="w-4 h-4 cursor-pointer accent-rose-800" />
                     <label htmlFor="usePrecoPorUnidade" className="text-xs font-semibold cursor-pointer flex-1 text-gray-700">Valor por unidade</label>
                   </div>
                   {usePrecoPorUnidade ? (
-                    <input type="text" className="input border-2 border-pink-200 focus:border-pink-500 mt-1 text-sm" placeholder="Valor por unidade" value={precoUnitario} onChange={e => setPrecoUnitario(e.target.value)} />
+                    <input type="text" className="input border-2 border-rose-200 focus:border-rose-700 mt-1 text-sm" placeholder="Valor por unidade" value={precoUnitario} onChange={e => setPrecoUnitario(e.target.value)} />
                   ) : (
-                    <input type="text" className="input border-2 border-pink-200 focus:border-pink-500 mt-1 text-sm" placeholder="Valor gasto" value={precoCompra} onChange={e => setPrecoCompra(e.target.value)} />
+                    <input type="text" className="input border-2 border-rose-200 focus:border-rose-700 mt-1 text-sm" placeholder="Valor gasto" value={precoCompra} onChange={e => setPrecoCompra(e.target.value)} />
                   )}
                 </div>
 
-                <input type="text" className="input border-2 border-pink-200 focus:border-pink-500 placeholder-gray-400" placeholder="Qtd (ex: 0.5 = 500g)" value={qtdCompra} onChange={e => setQtdCompra(e.target.value)} />
+                <input type="text" className="input border-2 border-rose-200 focus:border-rose-700 placeholder-gray-400" placeholder="Qtd (ex: 0.5 = 500g)" value={qtdCompra} onChange={e => setQtdCompra(e.target.value)} />
 
-                <button onClick={salvarIngrediente} className="btn btn-primary rounded-xl font-bold shadow-md hover:shadow-lg">
+                <button onClick={salvarIngrediente} className="btn btn-primary w-full sm:col-span-2 xl:col-span-1">
                   {editIndex !== null ? "✓ Atualizar" : "+ Adicionar"}
                 </button>
               </div>
             </div>
 
-            <div className="card bg-white rounded-2xl shadow-lg border-2 border-purple-100 hover:shadow-xl transition-shadow">
-              <h2 className="font-bold text-xl mb-4 text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-blue-600">🥄 Ingredientes</h2>
+            <div className="card border border-rose-200/80 bg-white/95">
+              <h2 className="font-bold text-xl mb-4 text-rose-950">🥄 Ingredientes</h2>
               {ingredientes.length === 0 ? (
                 <p className="text-sm text-gray-400 text-center py-8">Nenhum ingrediente cadastrado</p>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {ingredientes.map((i, idx) => {
                     const custo = custoMedio(i.id);
                     const isPeso = i.unidade === "kg" || i.unidade === "g";
@@ -487,16 +563,16 @@ export default function App() {
                     const labelUnidade = isPeso ? "kg" : i.unidade;
 
                     return (
-                      <div key={`ing-${i.id}`} className="flex justify-between border-b border-purple-100 py-4 last:border-b-0 items-start hover:bg-purple-50 px-3 rounded-lg transition">
+                      <div key={`ing-${i.id}`} className="flex flex-col sm:flex-row sm:justify-between gap-3 border-b border-rose-100 py-4 last:border-b-0 items-stretch sm:items-start hover:bg-rose-50 px-3 rounded-lg transition">
                         <div className="flex-1 min-w-0">
-                          <p className="font-bold text-gray-800">{i.nome}</p>
-                          <p className="text-xs text-gray-500 mt-1">📊 Custo: R$ <span className="font-semibold text-purple-600">{displayCusto.toFixed(2)}</span> / {displayUnidade}</p>
+                          <p className="font-bold text-gray-800 break-words">{i.nome}</p>
+                          <p className="text-xs text-gray-500 mt-1 break-words">📊 Custo: R$ <span className="font-semibold text-rose-900">{displayCusto.toFixed(2)}</span> / {displayUnidade}</p>
                         </div>
-                        <div className="flex gap-2 items-center ml-4 shrink-0">
-                          <button onClick={() => registrarCompra(i)} className="small-btn bg-blue-100 text-blue-700 hover:bg-blue-200 font-semibold text-xs rounded-md">💳</button>
-                          <button onClick={() => adicionarNaReceita(i)} className="small-btn bg-green-100 text-green-700 hover:bg-green-200 font-semibold text-xs rounded-md">✅</button>
-                          <button onClick={() => editarIngrediente(idx)} className="small-btn bg-yellow-100 text-yellow-700 hover:bg-yellow-200 font-semibold text-xs rounded-md">✏️</button>
-                          <button onClick={() => removerIngrediente(idx)} className="small-btn bg-red-100 text-red-700 hover:bg-red-200 font-semibold text-xs rounded-md">🗑️</button>
+                        <div className="grid grid-cols-4 gap-2 sm:flex sm:items-center sm:ml-4 shrink-0">
+                          <button onClick={() => registrarCompra(i)} className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 font-semibold text-xs rounded-md" aria-label={`Registrar compra de ${i.nome}`}>💳</button>
+                          <button onClick={() => adicionarNaReceita(i)} className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 font-semibold text-xs rounded-md" aria-label={`Usar ${i.nome} na receita`}>✅</button>
+                          <button onClick={() => editarIngrediente(idx)} className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 font-semibold text-xs rounded-md" aria-label={`Editar ${i.nome}`}>✏️</button>
+                          <button onClick={() => removerIngrediente(idx)} className="small-btn bg-red-100 text-red-700 hover:bg-red-200 font-semibold text-xs rounded-md" aria-label={`Remover ${i.nome}`}>🗑️</button>
                         </div>
                       </div>
                     );
@@ -504,105 +580,173 @@ export default function App() {
                 </div>
               )}
             </div>
+
+            <div className="card border border-rose-200/80 bg-white/95">
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
+                <div>
+                  <h3 className="font-bold text-lg text-rose-950">🧁 Receitas</h3>
+                  <p className="text-xs text-gray-500 mt-1">Selecione uma receita e use o botão ✅ nos ingredientes para montar a ficha.</p>
+                </div>
+                <p className="text-sm font-bold text-rose-900 shrink-0">Custo: R$ {custoTotal.toFixed(2)}</p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 mb-4">
+                <input className="input border-2 border-rose-200 focus:border-rose-700" placeholder="Nome da receita" value={nomeReceita} onChange={e => setNomeReceita(e.target.value)} />
+                <button onClick={criarReceita} className="btn btn-primary">+ Receita</button>
+              </div>
+
+              <div className="flex gap-2 overflow-x-auto pb-2 mb-4">
+                {receitas.map((r) => {
+                  const selecionada = String(r.id) === String(receitaSelecionadaIdAtual);
+
+                  return (
+                    <button
+                      key={`receita-${r.id}`}
+                      type="button"
+                      onClick={() => setReceitaSelecionadaId(r.id)}
+                      className={`small-btn shrink-0 ${selecionada ? "bg-rose-900 text-white hover:bg-rose-950" : "bg-rose-100 text-rose-900 hover:bg-rose-200"}`}
+                    >
+                      {r.nome}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {itensReceitaSelecionada.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-8">
+                  {receitaSelecionada ? `Sem ingredientes em ${receitaSelecionada.nome}` : "Crie uma receita para começar"}
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {itensReceitaSelecionada.map((r) => (
+                    <div key={`rec-${r.id}`} className="border-b border-rose-100 pb-3 last:border-b-0 hover:bg-rose-50 p-3 rounded-lg transition flex flex-col sm:flex-row lg:flex-col xl:flex-row gap-3 justify-between items-stretch sm:items-center lg:items-stretch xl:items-center">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-800 break-words">{r.nome}</p>
+                        <p className="text-xs text-gray-500 mt-1 break-words">{r.qtd} {r.unidade || "un"} • Custo: <span className="font-semibold text-rose-900">R$ {r.custo.toFixed(2)}</span></p>
+                      </div>
+                      <button onClick={() => removerDaReceita(r.id)} className="small-btn bg-red-100 text-red-700 hover:bg-red-200 font-semibold rounded-md self-start sm:self-center lg:self-start xl:self-center" aria-label={`Remover ${r.nome} da receita`}>🗑️</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
-          <aside className="lg:col-span-1 space-y-6">
-            <div className="bg-gradient-to-br from-pink-400 via-rose-400 to-orange-400 text-white rounded-2xl shadow-2xl p-6 border-2 border-rose-300">
+          <aside className="lg:col-span-1 space-y-5 lg:space-y-6">
+            <div className="bg-gradient-to-br from-pink-400 via-rose-400 to orange-400 text-white rounded-lg shadow-md p-4 sm:p-5 border ">
               <h2 className="font-bold text-xl mb-4">💰 Resumo Financeiro</h2>
               <div className="space-y-3 text-sm font-semibold">
-                <div className="bg-white/20 rounded-lg p-3 backdrop-blur">
+                <div className="bg-white/15 rounded-lg p-3 border border-white/10">
                   <p className="text-rose-100">Custo da receita</p>
-                  <p className="text-2xl font-bold">R$ {custoTotal.toFixed(2)}</p>
+                  <p className="text-2xl font-bold break-words">R$ {custoTotal.toFixed(2)}</p>
                 </div>
-                <div className="bg-white/20 rounded-lg p-3 backdrop-blur">
+                <div className="bg-white/15 rounded-lg p-3 border border-white/10">
                   <p className="text-rose-100">Vendas realizadas</p>
-                  <p className="text-2xl font-bold">R$ {vendaTotal.toFixed(2)}</p>
+                  <p className="text-2xl font-bold break-words">R$ {vendaTotal.toFixed(2)}</p>
                 </div>
-                <div className="bg-white/30 rounded-lg p-3 backdrop-blur border-2 border-white">
+                <div className="bg-white/20 rounded-lg p-3 border border-white/60">
                   <p className="text-white text-xs">LUCRO TOTAL</p>
-                  <p className="text-3xl font-bold">{lucro >= 0 ? '✅' : '❌'} R$ {Math.abs(lucro).toFixed(2)}</p>
+                  <p className="text-2xl sm:text-3xl font-bold break-words">{lucro >= 0 ? '✅' : '❌'} R$ {Math.abs(lucro).toFixed(2)}</p>
                 </div>
               </div>
               <hr className="my-4 border-white/40" />
               <div className="grid grid-cols-2 gap-2 text-xs">
-                <div className="bg-white/10 rounded-lg p-2 text-center">
+                <div className="bg-white/10 rounded-lg p-2 text-center min-w-0 border border-white/10">
                   <p className="text-rose-100">Gasto/Semana</p>
-                  <p className="font-bold">R$ {gastoSemana.toFixed(2)}</p>
+                  <p className="font-bold break-words">R$ {gastoSemana.toFixed(2)}</p>
                 </div>
-                <div className="bg-white/10 rounded-lg p-2 text-center">
+                <div className="bg-white/10 rounded-lg p-2 text-center min-w-0 border border-white/10">
                   <p className="text-rose-100">Ganho/Semana</p>
-                  <p className="font-bold">R$ {ganhoSemana.toFixed(2)}</p>
+                  <p className="font-bold break-words">R$ {ganhoSemana.toFixed(2)}</p>
                 </div>
               </div>
             </div>
 
-            <div className="card bg-white rounded-2xl shadow-lg border-2 border-blue-100 hover:shadow-xl transition-shadow">
-              <h2 className="font-bold text-lg mb-4 text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-600">⚙️ Configurar Vendas</h2>
-              <div className="space-y-3 mb-4">
-                <div>
-                  <label className="text-xs font-semibold text-gray-600 block mb-1">Preço por kg (bolo inteiro)</label>
-                  <input type="text" className="input border-2 border-blue-200 focus:border-blue-500" placeholder="R$ ex: 45.00" value={precoBolo} onChange={e => setPrecoBolo(e.target.value)} />
+            <div className="card border border-rose-200/80 bg-white/95">
+              <button
+                type="button"
+                onClick={() => setShowConfigVendas(prev => !prev)}
+                className="w-full flex items-center justify-between gap-3 text-left"
+                aria-expanded={showConfigVendas}
+              >
+                <span>
+                  <span className="block font-bold text-lg text-rose-950">⚙️ Configurar Vendas</span>
+                  <span className="block text-xs text-gray-500 mt-1">Preços e fatias ficam guardados para os próximos registros.</span>
+                </span>
+                <span className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 shrink-0">
+                  {showConfigVendas ? "▲" : "▼"}
+                </span>
+              </button>
+
+              {showConfigVendas && (
+                <div className="pt-4 mt-4 border-t border-rose-100">
+                  <div className="space-y-3 mb-4">
+                    <div>
+                      <label className="text-xs font-semibold text-gray-600 block mb-1">Preço por kg (bolo inteiro)</label>
+                      <input type="text" className="input border-2 border-rose-200 focus:border-rose-700" placeholder="R$ ex: 45.00" value={precoBolo} onChange={e => setPrecoBolo(e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-gray-600 block mb-1">Preço por fatia</label>
+                      <input type="text" className="input border-2 border-rose-200 focus:border-rose-700" placeholder="R$ ex: 8.50" value={precoFatia} onChange={e => setPrecoFatia(e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-gray-600 block mb-1">Fatias por bolo</label>
+                      <input type="text" className="input border-2 border-rose-200 focus:border-rose-700" placeholder="ex: 12" value={fatiasPerBolo} onChange={e => setFatiasPerBolo(e.target.value)} />
+                    </div>
+                  </div>
+                  <button onClick={salvarConfigsVendas} className="btn btn-primary w-full">💾 Salvar Configuração</button>
                 </div>
-                <div>
-                  <label className="text-xs font-semibold text-gray-600 block mb-1">Preço por fatia</label>
-                  <input type="text" className="input border-2 border-blue-200 focus:border-blue-500" placeholder="R$ ex: 8.50" value={precoFatia} onChange={e => setPrecoFatia(e.target.value)} />
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-gray-600 block mb-1">Fatias por bolo</label>
-                  <input type="text" className="input border-2 border-blue-200 focus:border-blue-500" placeholder="ex: 12" value={fatiasPerBolo} onChange={e => setFatiasPerBolo(e.target.value)} />
-                </div>
-              </div>
-              <button onClick={salvarConfigsVendas} className="btn btn-primary w-full rounded-xl font-bold shadow-md">💾 Salvar Configuração</button>
+              )}
             </div>
 
             {showNovaVenda ? (
-              <div className="card bg-gradient-to-br from-amber-50 to-orange-50 rounded-2xl shadow-lg border-2 border-amber-200">
-                <h3 className="font-bold text-lg mb-4 text-transparent bg-clip-text bg-gradient-to-r from-amber-600 to-orange-600">🛍️ Registrar Venda</h3>
-                <div className="flex gap-3 mb-4">
-                  <label className="flex-1 flex items-center gap-2 cursor-pointer p-3 bg-white rounded-lg border-2 border-amber-200 hover:border-amber-400 transition">
-                    <input type="radio" value="fatias" checked={tipoVenda === "fatias"} onChange={e => setTipoVenda(e.target.value)} name="tipoVenda" className="accent-amber-500" />
+              <div className="card bg-rose-50/90 border border-rose-200/80">
+                <h3 className="font-bold text-lg mb-4 text-rose-950">🛍️ Registrar Venda</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                  <label className="flex items-center gap-2 cursor-pointer p-3 bg-white rounded-lg border-2 border-rose-200 hover:border-rose-500 transition">
+                    <input type="radio" value="fatias" checked={tipoVenda === "fatias"} onChange={e => setTipoVenda(e.target.value)} name="tipoVenda" className="accent-rose-800" />
                     <span className="text-sm font-semibold text-gray-700">🍰 Fatias</span>
                   </label>
-                  <label className="flex-1 flex items-center gap-2 cursor-pointer p-3 bg-white rounded-lg border-2 border-amber-200 hover:border-amber-400 transition">
-                    <input type="radio" value="bolo" checked={tipoVenda === "bolo"} onChange={e => setTipoVenda(e.target.value)} name="tipoVenda" className="accent-amber-500" />
+                  <label className="flex items-center gap-2 cursor-pointer p-3 bg-white rounded-lg border-2 border-rose-200 hover:border-rose-500 transition">
+                    <input type="radio" value="bolo" checked={tipoVenda === "bolo"} onChange={e => setTipoVenda(e.target.value)} name="tipoVenda" className="accent-rose-800" />
                     <span className="text-sm font-semibold text-gray-700">🎂 Bolo Inteiro</span>
                   </label>
                 </div>
 
                 <div className="space-y-3">
-                  <input type="text" className="input border-2 border-amber-200 focus:border-amber-500" placeholder={tipoVenda === "bolo" ? "Quantidade (kg, ex: 2.5)" : "Quantidade (ex: 3)"} value={qtdVenda} onChange={e => setQtdVenda(e.target.value)} />
+                  <input type="text" className="input border-2 border-rose-200 focus:border-rose-700" placeholder={tipoVenda === "bolo" ? "Quantidade (kg, ex: 2.5)" : "Quantidade (ex: 3)"} value={qtdVenda} onChange={e => setQtdVenda(e.target.value)} />
                   {tipoVenda === "fatias" && (
-                    <input type="text" className="input border-2 border-amber-200 focus:border-amber-500" placeholder="Valor total (opcional - usa R$ por fatia se vazio)" value={valorVenda} onChange={e => setValorVenda(e.target.value)} />
+                    <input type="text" className="input border-2 border-rose-200 focus:border-rose-700" placeholder="Valor total (opcional - usa R$ por fatia se vazio)" value={valorVenda} onChange={e => setValorVenda(e.target.value)} />
                   )}
-                  <input type="date" className="input border-2 border-amber-200 focus:border-amber-500" value={dataVenda} onChange={e => setDataVenda(e.target.value)} />
-                  <textarea className="input border-2 border-amber-200 focus:border-amber-500 resize-none" placeholder="Anotação (ex: Cliente: Maria, Entrega 14h)" value={anotacaoVenda} onChange={e => setAnotacaoVenda(e.target.value)} rows="3" />
+                  <input type="date" className="input border-2 border-rose-200 focus:border-rose-700" value={dataVenda} onChange={e => setDataVenda(e.target.value)} />
+                  <textarea className="input border-2 border-rose-200 focus:border-rose-700 resize-none" placeholder="Anotação (ex: Cliente: Maria, Entrega 14h)" value={anotacaoVenda} onChange={e => setAnotacaoVenda(e.target.value)} rows="3" />
                 </div>
-                <div className="flex gap-3 mt-4">
-                  <button onClick={registrarVenda} className="btn btn-primary flex-1 rounded-xl font-bold">✅ Registrar</button>
-                  <button onClick={() => { setShowNovaVenda(false); setAnotacaoVenda(""); setDataVenda(new Date().toISOString().split('T')[0]); }} className="btn flex-1 rounded-xl font-bold bg-gray-200 text-gray-700 hover:bg-gray-300">❌ Cancelar</button>
+                <div className="flex flex-col sm:flex-row gap-3 mt-4">
+                  <button onClick={registrarVenda} className="btn btn-primary flex-1">✅ Registrar</button>
+                  <button onClick={() => { setShowNovaVenda(false); setAnotacaoVenda(""); setDataVenda(new Date().toISOString().split('T')[0]); }} className="btn flex-1 bg-gray-200 text-gray-700 hover:bg-gray-300">❌ Cancelar</button>
                 </div>
               </div>
             ) : (
-              <button onClick={() => setShowNovaVenda(true)} className="btn btn-primary w-full rounded-xl font-bold shadow-lg hover:shadow-xl">+ Nova Venda</button>
+              <button onClick={() => setShowNovaVenda(true)} className="btn btn-primary w-full shadow-md">+ Nova Venda</button>
             )}
 
-            <div className="card bg-white rounded-2xl shadow-lg border-2 border-green-100 hover:shadow-xl transition-shadow">
-              <h3 className="font-bold text-lg mb-4 text-transparent bg-clip-text bg-gradient-to-r from-green-600 to-emerald-600">📋 Vendas Realizadas</h3>
+            <div className="card border border-rose-200/80 bg-white/95">
+              <h3 className="font-bold text-lg mb-4 text-rose-950">📋 Vendas Realizadas</h3>
               {vendas.length === 0 ? (
                 <p className="text-sm text-gray-400 text-center py-8">Nenhuma venda registrada</p>
               ) : (
                 <div className="space-y-3">
                   {vendas.map((v) => (
-                    <div key={`vend-${v.id}`} className="border-b border-green-100 pb-4 last:border-b-0 hover:bg-green-50 p-3 rounded-lg transition">
-                      <div className="flex justify-between items-start">
-                        <div className="flex-1 text-sm">
-                          <p className="font-bold text-gray-800">{v.descricao}</p>
-                          {v.anotacao && <p className="text-xs text-gray-600 mt-1 bg-blue-50 p-2 rounded border-l-2 border-blue-400">📝 {v.anotacao}</p>}
+                    <div key={`vend-${v.id}`} className="border-b border-rose-100 pb-4 last:border-b-0 hover:bg-rose-50 p-3 rounded-lg transition">
+                      <div className="flex flex-col sm:flex-row lg:flex-col xl:flex-row justify-between gap-3 items-stretch sm:items-start">
+                        <div className="flex-1 text-sm min-w-0">
+                          <p className="font-bold text-gray-800 break-words">{v.descricao}</p>
+                          {v.anotacao && <p className="text-xs text-gray-600 mt-1 bg-rose-50 p-2 rounded border-l-2 border-rose-300 break-words">📝 {v.anotacao}</p>}
                           <p className="text-xs text-gray-500 mt-2">📅 {new Date(v.data).toLocaleDateString('pt-BR')}</p>
                         </div>
-                        <div className="flex items-center gap-3 ml-4">
-                          <p className="font-bold text-lg text-green-600 min-w-max">R$ {v.valor.toFixed(2)}</p>
-                          <button onClick={() => removerVenda(v.id)} className="small-btn bg-red-100 text-red-700 hover:bg-red-200 font-semibold rounded-md">🗑️</button>
+                        <div className="flex items-center justify-between sm:justify-end lg:justify-between xl:justify-end gap-3 shrink-0">
+                          <p className="font-bold text-lg text-emerald-700 break-words">R$ {v.valor.toFixed(2)}</p>
+                          <button onClick={() => removerVenda(v.id)} className="small-btn bg-red-100 text-red-700 hover:bg-red-200 font-semibold rounded-md" aria-label="Remover venda">🗑️</button>
                         </div>
                       </div>
                     </div>
@@ -611,24 +755,6 @@ export default function App() {
               )}
             </div>
 
-            <div className="card bg-white rounded-2xl shadow-lg border-2 border-indigo-100 hover:shadow-xl transition-shadow">
-              <h3 className="font-bold text-lg mb-4 text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600">🧁 Ingredientes na Receita</h3>
-              {receita.length === 0 ? (
-                <p className="text-sm text-gray-400 text-center py-8">Sem itens na receita</p>
-              ) : (
-                <div className="space-y-2">
-                  {receita.map((r) => (
-                    <div key={`rec-${r.id}`} className="border-b border-indigo-100 pb-3 last:border-b-0 hover:bg-indigo-50 p-3 rounded-lg transition flex justify-between items-center">
-                      <div className="flex-1">
-                        <p className="text-sm font-semibold text-gray-800">{r.nome}</p>
-                        <p className="text-xs text-gray-500 mt-1">{r.qtd} {r.unidade || "un"} • Custo: <span className="font-semibold text-indigo-600">R$ {r.custo.toFixed(2)}</span></p>
-                      </div>
-                      <button onClick={() => removerDaReceita(r.id)} className="small-btn bg-red-100 text-red-700 hover:bg-red-200 font-semibold rounded-md ml-2">🗑️</button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
           </aside>
         </div>
       </main>
@@ -636,32 +762,32 @@ export default function App() {
         <div className="space-y-4">
           <div>
             <label className="text-sm font-bold text-gray-700 block mb-2">Preço por unidade (opcional)</label>
-            <input className="input border-2 border-blue-200 focus:border-blue-500" value={compraModalPrecoUnit} onChange={e => setCompraModalPrecoUnit(e.target.value)} placeholder={compraModalIngrediente?.unidade === 'g' ? 'R$ / kg (ex: 12.5)' : 'R$ / unidade'} />
+            <input className="input border-2 border-rose-200 focus:border-rose-700" value={compraModalPrecoUnit} onChange={e => setCompraModalPrecoUnit(e.target.value)} placeholder={compraModalIngrediente?.unidade === 'g' ? 'R$ / kg (ex: 12.5)' : 'R$ / unidade'} />
           </div>
           <div>
             <label className="text-sm font-bold text-gray-700 block mb-2">Quantidade ({compraModalIngrediente?.unidade || ''})</label>
-            <input className="input border-2 border-blue-200 focus:border-blue-500" value={compraModalQtd} onChange={e => setCompraModalQtd(e.target.value)} placeholder={compraModalIngrediente?.unidade === 'g' ? 'ex: 0.5 = 500g' : ''} />
+            <input className="input border-2 border-rose-200 focus:border-rose-700" value={compraModalQtd} onChange={e => setCompraModalQtd(e.target.value)} placeholder={compraModalIngrediente?.unidade === 'g' ? 'ex: 0.5 = 500g' : ''} />
           </div>
           <div>
             <label className="text-sm font-bold text-gray-700 block mb-2">Valor total (opcional)</label>
-            <input className="input border-2 border-blue-200 focus:border-blue-500" value={compraModalPrecoTotal} onChange={e => setCompraModalPrecoTotal(e.target.value)} placeholder="Valor total pago" />
+            <input className="input border-2 border-rose-200 focus:border-rose-700" value={compraModalPrecoTotal} onChange={e => setCompraModalPrecoTotal(e.target.value)} placeholder="Valor total pago" />
           </div>
-          <div className="flex gap-3 justify-end pt-4 border-t border-gray-200">
-            <button className="btn bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg font-bold" onClick={() => setCompraModalOpen(false)}>Cancelar</button>
-            <button className="btn btn-primary rounded-lg font-bold shadow-lg" onClick={registrarCompraExec}>✅ Salvar compra</button>
+          <div className="flex flex-col sm:flex-row gap-3 sm:justify-end pt-4 border-t border-gray-200">
+            <button className="btn bg-gray-200 text-gray-700 hover:bg-gray-300" onClick={() => setCompraModalOpen(false)}>Cancelar</button>
+            <button className="btn btn-primary" onClick={registrarCompraExec}>✅ Salvar compra</button>
           </div>
         </div>
       </Modal>
 
-      <Modal isOpen={usarModalOpen} onClose={() => setUsarModalOpen(false)} title={usarModalIngrediente ? `✅ Usar — ${usarModalIngrediente.nome}` : 'Usar ingrediente'}>
+      <Modal isOpen={usarModalOpen} onClose={() => setUsarModalOpen(false)} title={usarModalIngrediente ? `✅ Usar — ${usarModalIngrediente.nome} em ${receitaSelecionada?.nome || "receita"}` : 'Usar ingrediente'}>
         <div className="space-y-4">
           <div>
             <label className="text-sm font-bold text-gray-700 block mb-2">Quantidade ({usarModalIngrediente?.unidade || ''})</label>
-            <input className="input border-2 border-green-200 focus:border-green-500" value={usarModalQtd} onChange={e => setUsarModalQtd(e.target.value)} placeholder={usarModalIngrediente?.unidade === 'g' ? 'ex: 0.5 = 500g' : ''} />
+            <input className="input border-2 border-rose-200 focus:border-rose-700" value={usarModalQtd} onChange={e => setUsarModalQtd(e.target.value)} placeholder={usarModalIngrediente?.unidade === 'g' ? 'ex: 0.5 = 500g' : ''} />
           </div>
-          <div className="flex gap-3 justify-end pt-4 border-t border-gray-200">
-            <button className="btn bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg font-bold" onClick={() => setUsarModalOpen(false)}>Cancelar</button>
-            <button className="btn btn-primary rounded-lg font-bold shadow-lg" onClick={adicionarNaReceitaExec}>✅ Adicionar</button>
+          <div className="flex flex-col sm:flex-row gap-3 sm:justify-end pt-4 border-t border-gray-200">
+            <button className="btn bg-gray-200 text-gray-700 hover:bg-gray-300" onClick={() => setUsarModalOpen(false)}>Cancelar</button>
+            <button className="btn btn-primary" onClick={adicionarNaReceitaExec}>✅ Adicionar</button>
           </div>
         </div>
       </Modal>
@@ -669,25 +795,25 @@ export default function App() {
       <Modal isOpen={confirmOpen} onClose={() => setConfirmOpen(false)} title="⚠️ Confirmação">
         <div className="space-y-4">
           <p className="text-gray-700 font-medium text-lg">{confirmMessage}</p>
-          <div className="flex gap-3 justify-end pt-4 border-t border-gray-200">
-            <button className="btn bg-gray-200 text-gray-700 hover:bg-gray-300 rounded-lg font-bold" onClick={() => setConfirmOpen(false)}>Não</button>
-            <button className="btn bg-red-500 text-white hover:bg-red-600 rounded-lg font-bold shadow-lg" onClick={handleConfirmYes}>Sim, excluir</button>
+          <div className="flex flex-col sm:flex-row gap-3 sm:justify-end pt-4 border-t border-gray-200">
+            <button className="btn bg-gray-200 text-gray-700 hover:bg-gray-300" onClick={() => setConfirmOpen(false)}>Não</button>
+            <button className="btn bg-red-500 text-white hover:bg-red-600" onClick={handleConfirmYes}>Sim, excluir</button>
           </div>
         </div>
       </Modal>
 
       <Modal isOpen={alertOpen} onClose={() => setAlertOpen(false)} title="ℹ️ Aviso">
         <div className="space-y-4">
-          <p className="text-gray-700 font-medium text-lg bg-blue-50 p-4 rounded-lg border-l-4 border-blue-400">{alertMessage}</p>
-          <div className="flex justify-end pt-4 border-t border-gray-200">
-            <button className="btn btn-primary rounded-lg font-bold shadow-lg" onClick={() => setAlertOpen(false)}>✅ OK</button>
+          <p className="text-gray-700 font-medium text-lg bg-rose-50 p-4 rounded-lg border-l-4 border-rose-300">{alertMessage}</p>
+          <div className="flex sm:justify-end pt-4 border-t border-gray-200">
+            <button className="btn btn-primary w-full sm:w-auto" onClick={() => setAlertOpen(false)}>✅ OK</button>
           </div>
         </div>
       </Modal>
 
-      <footer className="bg-gradient-to-r from-pink-100 via-purple-100 to-blue-100 border-t-4 border-pink-400 py-6">
-        <div className="max-w-6xl mx-auto px-6 text-center">
-          <p className="text-transparent bg-clip-text bg-gradient-to-r from-pink-600 to-purple-600 font-bold">🎂 Feito com ❤️ para minha confeiteira predileta!</p>
+      <footer className="bg-white/85 border-t border-pink-100 py-5">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 text-center">
+          <p className="text-rose-950 font-bold">🎂 Feito com ❤️ para minha confeiteira predileta!</p>
           <p className="text-xs text-gray-600 mt-1">Sistema de Controle de Custos • v1.0</p>
         </div>
       </footer>
