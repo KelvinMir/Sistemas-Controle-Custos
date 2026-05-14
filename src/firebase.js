@@ -1,6 +1,12 @@
 // Import the functions you need from the SDKs you need
 import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { getAuth, onAuthStateChanged, signInAnonymously } from "firebase/auth";
+import {
+  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+} from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAkrGfhhaVUhBCqfYgYO0POEmVvXrCbs0Q",
@@ -14,6 +20,39 @@ const firebaseConfig = {
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
-const dbFirestore = getFirestore(app);
+export const auth = getAuth(app);
+let dbFirestore;
+
+try {
+  dbFirestore = initializeFirestore(app, {
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager(),
+    }),
+  });
+} catch (error) {
+  console.error("Não foi possível ativar o cache persistente do Firestore:", error);
+  dbFirestore = getFirestore(app);
+}
+
+export const authReady = new Promise((resolve, reject) => {
+  const unsubscribe = onAuthStateChanged(
+    auth,
+    (user) => {
+      if (user) {
+        unsubscribe();
+        resolve(user);
+      }
+    },
+    (error) => {
+      unsubscribe();
+      reject(error);
+    }
+  );
+
+  signInAnonymously(auth).catch((error) => {
+    unsubscribe();
+    reject(error);
+  });
+});
 
 export default dbFirestore;

@@ -1,6 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import React from "react";
-import { db, syncFromFirestore, syncToFirestore, setupRealtimeSync, migrateToFirestore } from "./db";
+import {
+  db,
+  deleteFromFirestore,
+  syncFromFirestore,
+  syncToFirestore,
+  setupRealtimeSync,
+} from "./db";
 import Modal from "./components/Modal";
 import sunflowerIcon from "./img/sunflower-svgrepo-com.svg";
 
@@ -41,6 +47,8 @@ export default function App() {
 
   const [alertOpen, setAlertOpen] = useState(false);
   const [alertMessage, setAlertMessage] = useState("");
+  const [firebaseStatus, setFirebaseStatus] = useState("idle");
+  const firebaseSyncIdRef = useRef(0);
 
   // VENDAS
   const [precoBolo, setPrecoBolo] = useState("");
@@ -58,38 +66,43 @@ export default function App() {
 
 
   useEffect(() => {
-    const carregarDados = async () => {
-      // Migrate and synchronize with Firebase if configured
-      await migrateToFirestore();
-      await syncFromFirestore();
+    let isMounted = true;
+    let stopRealtimeSync = () => {};
 
+    const migrarLocalStorage = async () => {
       // Migra dados do localStorage para o IndexedDB na primeira vez
       const raw = localStorage.getItem("sistema_bolos");
       const jaTemDados = (await db.ingredientes.count()) > 0;
 
       if (raw && !jaTemDados) {
-        const data = JSON.parse(raw);
-        let ingredientesData = data.ingredientes || [];
-        let comprasData = data.compras || [];
+        try {
+          const data = JSON.parse(raw);
+          let ingredientesData = data.ingredientes || [];
+          let comprasData = data.compras || [];
 
-        // Converte unidade "g" para "kg" e ajusta quantidades
-        comprasData = comprasData.map(c => {
-          const ing = ingredientesData.find(i => i.id === c.ingredienteId);
-          if (ing && ing.unidade === "g") return { ...c, quantidade: c.quantidade / 1000 };
-          return c;
-        });
-        ingredientesData = ingredientesData.map(i =>
-          i.unidade === "g" ? { ...i, unidade: "kg" } : i
-        );
+          // Converte unidade "g" para "kg" e ajusta quantidades
+          comprasData = comprasData.map(c => {
+            const ing = ingredientesData.find(i => i.id === c.ingredienteId);
+            if (ing && ing.unidade === "g") return { ...c, quantidade: c.quantidade / 1000 };
+            return c;
+          });
+          ingredientesData = ingredientesData.map(i =>
+            i.unidade === "g" ? { ...i, unidade: "kg" } : i
+          );
 
-        if (ingredientesData.length) await db.ingredientes.bulkPut(ingredientesData);
-        if (comprasData.length) await db.compras.bulkAdd(comprasData);
-        if ((data.receita || []).length) await db.receita.bulkAdd(data.receita);
-        if (data.precoVenda) await db.config.put({ chave: "precoVenda", valor: data.precoVenda });
+          if (ingredientesData.length) await db.ingredientes.bulkPut(ingredientesData);
+          if (comprasData.length) await db.compras.bulkAdd(comprasData);
+          if ((data.receita || []).length) await db.receita.bulkAdd(data.receita);
+          if (data.precoVenda) await db.config.put({ chave: "precoVenda", valor: data.precoVenda });
 
-        localStorage.removeItem("sistema_bolos");
+          localStorage.removeItem("sistema_bolos");
+        } catch (error) {
+          console.error("Erro ao migrar dados do localStorage:", error);
+        }
       }
+    };
 
+    const carregarDadosLocais = async () => {
       let [ings, comps, rec, receitasData, cfg, vends] = await Promise.all([
         db.ingredientes.toArray(),
         db.compras.toArray(),
@@ -128,8 +141,17 @@ export default function App() {
       }
 
       if (deveSincronizarReceitas) {
-        await syncToFirestore();
+        sincronizarFirebase("sincronizar receitas");
       }
+
+      // Carrega configurações de vendas
+      const [cfgBolo, cfgFatia, cfgFatias] = await Promise.all([
+        db.config.get("precoBolo"),
+        db.config.get("precoFatia"),
+        db.config.get("fatiasPerBolo"),
+      ]);
+
+      if (!isMounted) return;
 
       setIngredientes(ings);
       setCompras(comps);
@@ -138,26 +160,99 @@ export default function App() {
       setReceitaSelecionadaId(receitaPadraoId || null);
       setPrecoVenda(cfg?.valor || "");
       setVendas(vends);
-
-      // Carrega configurações de vendas
-      const [cfgBolo, cfgFatia, cfgFatias] = await Promise.all([
-        db.config.get("precoBolo"),
-        db.config.get("precoFatia"),
-        db.config.get("fatiasPerBolo"),
-      ]);
       setPrecoBolo(cfgBolo?.valor || "");
       setPrecoFatia(cfgFatia?.valor || "");
       setFatiasPerBolo(cfgFatias?.valor || "");
-
-      setupRealtimeSync();
     };
 
-    carregarDados();
+    const sincronizarDadosRemotos = async () => {
+      // Primeiro sobe o que existe localmente; depois baixa o que veio do Firebase.
+      await aguardarOuContinuar(sincronizarFirebase("salvar dados locais no Firebase"));
+      await syncFromFirestore();
+      await carregarDadosLocais();
+
+      if (!isMounted) return;
+      stopRealtimeSync();
+      stopRealtimeSync = setupRealtimeSync();
+    };
+
+    const carregarDados = async () => {
+      await migrarLocalStorage();
+      await carregarDadosLocais();
+      sincronizarDadosRemotos().catch((error) => {
+        console.error("Erro ao sincronizar dados remotos:", error);
+      });
+    };
+
+    carregarDados().catch((error) => {
+      console.error("Erro ao carregar dados locais:", error);
+    });
+
+    return () => {
+      isMounted = false;
+      stopRealtimeSync();
+    };
   }, []);
 
   const parseNumero = (valor) => {
     if (!valor) return 0;
     return Number(String(valor).replace(",", "."));
+  };
+
+  const mostrarErroFirebase = (error, acao) => {
+    console.error(`Erro ao ${acao}:`, error);
+    setFirebaseStatus("error");
+    setAlertMessage(
+      `Os dados ficaram salvos neste dispositivo, mas não consegui ${acao} no Firebase. ` +
+      `Verifique a conexão e as regras do Firestore. Detalhe: ${error.message || error}`
+    );
+    setAlertOpen(true);
+  };
+
+  const sincronizarFirebase = (acao = "salvar os dados") => {
+    const syncId = firebaseSyncIdRef.current + 1;
+    firebaseSyncIdRef.current = syncId;
+    setFirebaseStatus("syncing");
+
+    const timeoutId = setTimeout(() => {
+      if (firebaseSyncIdRef.current === syncId) {
+        setFirebaseStatus("pending");
+      }
+    }, 8000);
+
+    const syncPromise = syncToFirestore();
+
+    syncPromise
+      .then(() => {
+        if (firebaseSyncIdRef.current === syncId) {
+          setFirebaseStatus("synced");
+        }
+      })
+      .catch((error) => {
+        if (firebaseSyncIdRef.current === syncId) {
+          mostrarErroFirebase(error, acao);
+        }
+      })
+      .finally(() => clearTimeout(timeoutId));
+
+    return syncPromise;
+  };
+
+  const aguardarOuContinuar = (promise, timeoutMs = 5000) =>
+    new Promise((resolve) => {
+      const timeoutId = setTimeout(resolve, timeoutMs);
+      promise
+        .catch(() => {})
+        .finally(() => {
+          clearTimeout(timeoutId);
+          resolve();
+        });
+    });
+
+  const removerDoFirebase = (coll, itemOrId, acao) => {
+    deleteFromFirestore(coll, itemOrId).catch((error) => {
+      mostrarErroFirebase(error, acao);
+    });
   };
 
   const salvarIngrediente = async () => {
@@ -217,7 +312,7 @@ export default function App() {
       setCompras(prev => [...prev, { ...novaCompra, id: compraId }]);
     }
 
-    await syncToFirestore();
+    sincronizarFirebase("salvar ingrediente no Firebase");
 
     setNome("");
     setUnidade("kg");
@@ -278,7 +373,7 @@ export default function App() {
     setCompras(prev => [...prev, { ...novaCompra, id: compraId }]);
     setCompraModalOpen(false);
 
-    await syncToFirestore();
+    sincronizarFirebase("salvar compra no Firebase");
   };
 
   const custoMedio = (ingredienteId) => {
@@ -332,14 +427,14 @@ export default function App() {
     setReceita(prev => [...prev, { ...novoItem, id: itemId }]);
     setUsarModalOpen(false);
 
-    await syncToFirestore();
+    sincronizarFirebase("salvar item da receita no Firebase");
   };
 
   const removerDaReceita = async (itemId) => {
     await db.receita.delete(itemId);
     setReceita(prev => prev.filter(r => r.id !== itemId));
 
-    await syncToFirestore();
+    removerDoFirebase("receita", itemId, "remover item da receita no Firebase");
   };
 
   const criarReceita = async () => {
@@ -362,7 +457,7 @@ export default function App() {
     setReceitaSelecionadaId(receitaId);
     setNomeReceita("");
 
-    await syncToFirestore();
+    sincronizarFirebase("salvar receita no Firebase");
   };
 
   const salvarConfigsVendas = async () => {
@@ -376,7 +471,7 @@ export default function App() {
       precoFatia && db.config.put({ chave: "precoFatia", valor: parseNumero(precoFatia) }),
       fatiasPerBolo && db.config.put({ chave: "fatiasPerBolo", valor: parseNumero(fatiasPerBolo) }),
     ]);
-    await syncToFirestore();
+    sincronizarFirebase("salvar configurações no Firebase");
     setShowConfigVendas(false);
     alert("Configurações de vendas salvas!");
   };
@@ -438,7 +533,7 @@ export default function App() {
     setDataVenda(new Date().toISOString().split('T')[0]);
     setShowNovaVenda(false);
 
-    await syncToFirestore();
+    sincronizarFirebase("salvar venda no Firebase");
   };
 
   const removerVenda = (vendaId) => {
@@ -452,10 +547,15 @@ export default function App() {
     if (confirmAction === "delete-ingredient" && confirmData) {
       const { index } = confirmData;
       const id = ingredientes[index].id;
+      const comprasDoIngrediente = await db.compras.where("ingredienteId").equals(id).toArray();
       await db.compras.where("ingredienteId").equals(id).delete();
       await db.ingredientes.delete(id);
       setIngredientes(prev => prev.filter((_, i) => i !== index));
       setCompras(prev => prev.filter(c => c.ingredienteId !== id));
+      removerDoFirebase("ingredientes", id, "remover ingrediente no Firebase");
+      comprasDoIngrediente.forEach((compra) => {
+        removerDoFirebase("compras", compra.id, "remover compras do ingrediente no Firebase");
+      });
       if (editIndex === index) {
         setNome("");
         setUnidade("kg");
@@ -469,12 +569,13 @@ export default function App() {
       const { vendaId } = confirmData;
       await db.vendas.delete(vendaId);
       setVendas(prev => prev.filter(v => v.id !== vendaId));
+      removerDoFirebase("vendas", vendaId, "remover venda no Firebase");
     }
     setConfirmOpen(false);
     setConfirmAction(null);
     setConfirmData(null);
 
-    await syncToFirestore();
+    sincronizarFirebase("atualizar Firebase após exclusão");
   };
 
   const receitaSelecionada = receitas.find(r => String(r.id) === String(receitaSelecionadaId)) || receitas[0] || null;
@@ -498,10 +599,33 @@ export default function App() {
     .filter(v => new Date(v.data) >= inicioSemana)
     .reduce((acc, v) => acc + v.valor, 0);
 
+  const firebaseStatusInfo = {
+    idle: {
+      label: "Firebase pronto",
+      className: "bg-white/15 text-white border-white/20",
+    },
+    syncing: {
+      label: "Salvando no Firebase...",
+      className: "bg-yellow-100 text-yellow-950 border-yellow-200",
+    },
+    pending: {
+      label: "Firebase pendente",
+      className: "bg-orange-100 text-orange-950 border-orange-200",
+    },
+    synced: {
+      label: "Firebase salvo",
+      className: "bg-emerald-100 text-emerald-950 border-emerald-200",
+    },
+    error: {
+      label: "Erro no Firebase",
+      className: "bg-red-100 text-red-950 border-red-200",
+    },
+  }[firebaseStatus];
+
   return (
     <div className="min-h-screen flex flex-col bg-[#fff7fc] text-gray-900">
       <header className="bg-gradient-to-r from-pink-500 via-purple-500 to-blue-600 text-white shadow-sm border-b border-white/20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-5 flex sm:justify-between sm:items-center gap-2">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-5 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
           <div className="flex flex-grow items-center gap-3">
             <img className="h-12 w-12" src={sunflowerIcon} alt="" />
             <div>
@@ -511,6 +635,9 @@ export default function App() {
               <p className="text-white/85 text-sm m-0">Controle dos custos e receitas para suas encomendas</p>
             </div>
           </div>
+          <span className={`inline-flex w-fit items-center rounded-md border px-3 py-1 text-xs font-bold ${firebaseStatusInfo.className}`}>
+            {firebaseStatusInfo.label}
+          </span>
         </div>
       </header>
 

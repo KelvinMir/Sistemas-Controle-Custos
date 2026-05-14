@@ -1,0 +1,33 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    match /ingredientes/{document=**} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /compras/{document=**} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /receita/{document=**} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /receitas/{document=**} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /vendas/{document=**} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /config/{document=**} {
+      allow read, write: if isSignedIn();
+    }
+  }
+}

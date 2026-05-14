@@ -1,11 +1,17 @@
 import Dexie from "dexie";
-import dbFirestore from "./firebase";
+import dbFirestore, { authReady } from "./firebase";
 import { collection, deleteDoc, getDocs, setDoc, doc, onSnapshot } from "firebase/firestore";
 
 const collections = ["ingredientes", "compras", "receita", "receitas", "vendas", "config"];
 
 const isFirebaseConfigured = () => {
   return dbFirestore && typeof dbFirestore !== 'undefined';
+};
+
+const ensureFirebaseReady = async () => {
+  if (!isFirebaseConfigured()) return false;
+  await authReady;
+  return true;
 };
 
 const normalizeId = (id) => {
@@ -38,6 +44,55 @@ const replaceLocalCollection = async (coll, data) => {
   if (data.length > 0) {
     await db[coll].bulkPut(data);
   }
+};
+
+export const saveToFirestore = async (coll, item) => {
+  if (!(await ensureFirebaseReady())) return;
+
+  const documentId = getFirestoreDocumentId(item);
+
+  if (!documentId) {
+    throw new Error(`Item sem id/chave não pode ser salvo no Firestore em ${coll}.`);
+  }
+
+  await setDoc(doc(dbFirestore, coll, documentId), item, { merge: true });
+};
+
+export const deleteFromFirestore = async (coll, itemOrId) => {
+  if (!(await ensureFirebaseReady())) return;
+
+  const documentId = typeof itemOrId === "object"
+    ? getFirestoreDocumentId(itemOrId)
+    : itemOrId;
+
+  if (documentId === undefined || documentId === null) {
+    throw new Error(`Item sem id/chave não pode ser removido do Firestore em ${coll}.`);
+  }
+
+  await deleteDoc(doc(dbFirestore, coll, String(documentId)));
+};
+
+const syncCollectionToFirestore = async (coll) => {
+  const data = await db[coll].toArray();
+  await Promise.all(data.map((item) => saveToFirestore(coll, item)));
+};
+
+const applyRemoteCollection = async (coll, data) => {
+  const localCount = await db[coll].count();
+
+  if (data.length === 0 && localCount > 0) {
+    console.warn(
+      `Firestore retornou ${coll} vazio, mas há ${localCount} registro(s) local(is). Mantendo dados locais.`
+    );
+
+    syncCollectionToFirestore(coll).catch((error) => {
+      console.error(`Erro ao reenviar dados locais de ${coll} para o Firestore:`, error);
+    });
+
+    return;
+  }
+
+  await replaceLocalCollection(coll, data);
 };
 
 export const db = new Dexie("ControleCustos");
@@ -78,14 +133,14 @@ db.version(2).stores({
 });
 
 export const syncFromFirestore = async () => {
-  if (!isFirebaseConfigured()) return;
+  if (!(await ensureFirebaseReady())) return;
   try {
     for (const coll of collections) {
       const querySnapshot = await getDocs(collection(dbFirestore, coll));
       const data = querySnapshot.docs.map((snapshotDoc) =>
         normalizeFirestoreDoc(coll, snapshotDoc)
       );
-      await replaceLocalCollection(coll, data);
+      await applyRemoteCollection(coll, data);
     }
   } catch (error) {
     console.error("Erro ao sincronizar do Firestore:", error);
@@ -93,7 +148,7 @@ export const syncFromFirestore = async () => {
 };
 
 export const migrateToFirestore = async () => {
-  if (!isFirebaseConfigured()) return;
+  if (!(await ensureFirebaseReady())) return;
   try {
     let hasDataInFirestore = false;
     for (const coll of collections) {
@@ -115,51 +170,52 @@ export const migrateToFirestore = async () => {
 };
 
 export const syncToFirestore = async () => {
-  if (!isFirebaseConfigured()) return;
+  if (!(await ensureFirebaseReady())) return;
   try {
-    for (const coll of collections) {
-      const data = await db[coll].toArray();
-      const localDocumentIds = new Set();
-
-      for (const item of data) {
-        const documentId = getFirestoreDocumentId(item);
-
-        if (!documentId) {
-          console.warn(`Item sem id/chave ignorado na sincronização de ${coll}:`, item);
-          continue;
-        }
-
-        localDocumentIds.add(documentId);
-        const docRef = doc(dbFirestore, coll, documentId);
-        await setDoc(docRef, item);
-      }
-
-      const querySnapshot = await getDocs(collection(dbFirestore, coll));
-      for (const snapshotDoc of querySnapshot.docs) {
-        if (!localDocumentIds.has(snapshotDoc.id)) {
-          await deleteDoc(doc(dbFirestore, coll, snapshotDoc.id));
-        }
-      }
-    }
+    await Promise.all(collections.map((coll) => syncCollectionToFirestore(coll)));
   } catch (error) {
     console.error("Erro ao sincronizar para Firestore:", error);
+    throw error;
   }
 };
 
 export const setupRealtimeSync = () => {
-  if (!isFirebaseConfigured()) return;
-  collections.forEach(coll => {
-    onSnapshot(
-      collection(dbFirestore, coll),
-      async (querySnapshot) => {
-        const data = querySnapshot.docs.map((snapshotDoc) =>
-          normalizeFirestoreDoc(coll, snapshotDoc)
+  if (!isFirebaseConfigured()) return () => {};
+
+  let closed = false;
+  const unsubscribes = [];
+
+  authReady
+    .then(() => {
+      if (closed) return;
+
+      collections.forEach(coll => {
+        const unsubscribe = onSnapshot(
+          collection(dbFirestore, coll),
+          async (querySnapshot) => {
+            try {
+              const data = querySnapshot.docs.map((snapshotDoc) =>
+                normalizeFirestoreDoc(coll, snapshotDoc)
+              );
+              await applyRemoteCollection(coll, data);
+            } catch (error) {
+              console.error(`Erro ao aplicar dados em tempo real (${coll}):`, error);
+            }
+          },
+          (error) => {
+            console.error(`Erro no listener do Firestore (${coll}):`, error);
+          }
         );
-        await replaceLocalCollection(coll, data);
-      },
-      (error) => {
-        console.error(`Erro no listener do Firestore (${coll}):`, error);
-      }
-    );
-  });
+
+        unsubscribes.push(unsubscribe);
+      });
+    })
+    .catch((error) => {
+      console.error("Erro ao autenticar no Firebase:", error);
+    });
+
+  return () => {
+    closed = true;
+    unsubscribes.forEach(unsubscribe => unsubscribe());
+  };
 };
