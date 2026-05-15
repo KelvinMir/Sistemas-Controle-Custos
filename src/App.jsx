@@ -18,6 +18,8 @@ export default function App() {
   const [receitas, setReceitas] = useState([]);
   const [receitaSelecionadaId, setReceitaSelecionadaId] = useState(null);
   const [nomeReceita, setNomeReceita] = useState("");
+  const [ingredienteReceitaId, setIngredienteReceitaId] = useState("");
+  const [qtdIngredienteReceita, setQtdIngredienteReceita] = useState("");
 
   const [nome, setNome] = useState("");
   const [unidade, setUnidade] = useState("kg");
@@ -35,6 +37,7 @@ export default function App() {
   const [compraModalPrecoUnit, setCompraModalPrecoUnit] = useState("");
   const [compraModalQtd, setCompraModalQtd] = useState("");
   const [compraModalPrecoTotal, setCompraModalPrecoTotal] = useState("");
+  const [compraModalAviso, setCompraModalAviso] = useState("");
 
   const [usarModalOpen, setUsarModalOpen] = useState(false);
   const [usarModalIngrediente, setUsarModalIngrediente] = useState(null);
@@ -42,7 +45,7 @@ export default function App() {
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmMessage, setConfirmMessage] = useState("");
-  const [confirmAction, setConfirmAction] = useState(null); // "delete-ingredient" ou "delete-sale"
+  const [confirmAction, setConfirmAction] = useState(null); // "delete-ingredient", "delete-sale" ou "delete-recipe"
   const [confirmData, setConfirmData] = useState(null); // dados para a ação (ex: { index } ou { vendaId })
 
   const [alertOpen, setAlertOpen] = useState(false);
@@ -195,8 +198,48 @@ export default function App() {
   }, []);
 
   const parseNumero = (valor) => {
-    if (!valor) return 0;
-    return Number(String(valor).replace(",", "."));
+    if (valor === null || valor === undefined) return 0;
+    const texto = String(valor).trim().replace(/[^\d,.-]/g, "");
+    if (!texto) return 0;
+    const normalizado = texto.includes(",")
+      ? texto.replace(/\./g, "").replace(",", ".")
+      : texto;
+    const numero = Number(normalizado);
+    return Number.isFinite(numero) ? numero : 0;
+  };
+
+  const normalizarNomeIngrediente = (valor) =>
+    String(valor || "")
+      .trim()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLocaleLowerCase("pt-BR");
+
+  const encontrarIngredientePorNome = (nomeBusca, ignorarId = null) => {
+    const nomeNormalizado = normalizarNomeIngrediente(nomeBusca);
+    if (!nomeNormalizado) return null;
+
+    return ingredientes.find((ingrediente) => {
+      const mesmoNome = normalizarNomeIngrediente(ingrediente.nome) === nomeNormalizado;
+      const mesmoIdIgnorado = ignorarId !== null && String(ingrediente.id) === String(ignorarId);
+      return mesmoNome && !mesmoIdIgnorado;
+    }) || null;
+  };
+
+  const limparFormularioIngrediente = () => {
+    setNome("");
+    setUnidade("kg");
+    setPrecoCompra("");
+    setPrecoUnitario("");
+    setUsePrecoPorUnidade(false);
+    setQtdCompra("");
+  };
+
+  const labelPrecoPorUnidade = (unidadeIngrediente) => {
+    if (unidadeIngrediente === "kg" || unidadeIngrediente === "g") return "Preço por kg";
+    if (unidadeIngrediente === "litro") return "Preço por litro";
+    if (unidadeIngrediente === "pacote") return "Preço por pacote";
+    return "Preço por unidade";
   };
 
   const mostrarErroFirebase = (error, acao) => {
@@ -249,23 +292,45 @@ export default function App() {
         });
     });
 
-  const removerDoFirebase = (coll, itemOrId, acao) => {
-    deleteFromFirestore(coll, itemOrId).catch((error) => {
+  const removerDoFirebase = async (coll, itemOrId, acao) => {
+    setFirebaseStatus("syncing");
+
+    try {
+      await deleteFromFirestore(coll, itemOrId);
+      setFirebaseStatus("synced");
+      return true;
+    } catch (error) {
       mostrarErroFirebase(error, acao);
-    });
+      return false;
+    }
   };
 
   const salvarIngrediente = async () => {
-    if (!nome) return;
+    const nomeLimpo = nome.trim();
+    if (!nomeLimpo) return;
 
     const precoNum = parseNumero(precoCompra);
     const precoUnitNum = parseNumero(precoUnitario);
     const qtdNum = parseNumero(qtdCompra);
+    const ingredienteEditado = editIndex !== null ? ingredientes[editIndex] : null;
+    const ingredienteExistente = encontrarIngredientePorNome(nomeLimpo, ingredienteEditado?.id ?? null);
+
+    if (ingredienteExistente) {
+      abrirModalCompra(ingredienteExistente, {
+        precoUnit: usePrecoPorUnidade ? precoUnitario : "",
+        precoTotal: usePrecoPorUnidade ? "" : precoCompra,
+        qtd: qtdCompra,
+        aviso: "Esse ingrediente já existe. Registre uma nova compra nele para atualizar o custo médio.",
+      });
+      limparFormularioIngrediente();
+      setEditIndex(null);
+      return;
+    }
 
     if (editIndex !== null) {
       const ing = ingredientes[editIndex];
-      await db.ingredientes.update(ing.id, { nome, unidade });
-      setIngredientes(prev => prev.map((item, i) => i === editIndex ? { ...item, nome, unidade } : item));
+      await db.ingredientes.update(ing.id, { nome: nomeLimpo, unidade });
+      setIngredientes(prev => prev.map((item, i) => i === editIndex ? { ...item, nome: nomeLimpo, unidade } : item));
 
       const precoFinalEdit = usePrecoPorUnidade && precoUnitNum > 0 ? precoUnitNum * qtdNum : precoNum;
       if (precoFinalEdit > 0 && qtdNum > 0) {
@@ -273,7 +338,7 @@ export default function App() {
         if (unidade === "g") quantidadeArmazenada = qtdNum / 1000;
         const novaCompra = {
           ingredienteId: ing.id,
-          nome,
+          nome: nomeLimpo,
           preco: precoFinalEdit,
           quantidade: quantidadeArmazenada,
           data: new Date().toISOString()
@@ -294,7 +359,7 @@ export default function App() {
       }
 
       const id = Date.now();
-      const novoIngrediente = { id, nome, unidade };
+      const novoIngrediente = { id, nome: nomeLimpo, unidade };
       await db.ingredientes.put(novoIngrediente);
       setIngredientes(prev => [...prev, novoIngrediente]);
 
@@ -303,7 +368,7 @@ export default function App() {
 
       const novaCompra = {
         ingredienteId: id,
-        nome,
+        nome: nomeLimpo,
         preco: precoFinal,
         quantidade: quantidadeArmazenada,
         data: new Date().toISOString()
@@ -314,12 +379,7 @@ export default function App() {
 
     sincronizarFirebase("salvar ingrediente no Firebase");
 
-    setNome("");
-    setUnidade("kg");
-    setPrecoCompra("");
-    setPrecoUnitario("");
-    setUsePrecoPorUnidade(false);
-    setQtdCompra("");
+    limparFormularioIngrediente();
   };
 
   const editarIngrediente = (index) => {
@@ -334,18 +394,22 @@ export default function App() {
     setTimeout(() => setConfirmOpen(true), 0);
   };
 
-  const registrarCompra = (ingrediente) => {
+  const abrirModalCompra = (ingrediente, dados = {}) => {
     setCompraModalIngrediente(ingrediente);
-    setCompraModalPrecoUnit("");
-    setCompraModalQtd("");
-    setCompraModalPrecoTotal("");
+    setCompraModalPrecoUnit(dados.precoUnit || "");
+    setCompraModalQtd(dados.qtd || "");
+    setCompraModalPrecoTotal(dados.precoTotal || "");
+    setCompraModalAviso(dados.aviso || "");
     setTimeout(() => setCompraModalOpen(true), 0);
+  };
+
+  const registrarCompra = (ingrediente) => {
+    abrirModalCompra(ingrediente);
   };
 
   const registrarCompraExec = async () => {
     const ingrediente = compraModalIngrediente;
     if (!ingrediente) return;
-    const unidadeLabel = ingrediente.unidade === "g" ? "kg (ex: 0.5 = 500g)" : ingrediente.unidade;
     const precoUnit = parseNumero(compraModalPrecoUnit);
     const qtd = parseNumero(compraModalQtd);
     if (!qtd) return setAlertMessage("Informe a quantidade da compra."), setAlertOpen(true);
@@ -377,14 +441,81 @@ export default function App() {
   };
 
   const custoMedio = (ingredienteId) => {
-    const lista = compras.filter(c => c.ingredienteId === ingredienteId);
+    const lista = compras.filter(c => String(c.ingredienteId) === String(ingredienteId));
 
-    const totalValor = lista.reduce((acc, c) => acc + c.preco, 0);
-    const totalQtd = lista.reduce((acc, c) => acc + c.quantidade, 0);
+    const totalValor = lista.reduce((acc, c) => acc + parseNumero(c.preco), 0);
+    const totalQtd = lista.reduce((acc, c) => acc + parseNumero(c.quantidade), 0);
 
     if (totalQtd <= 0) return 0;
 
     return totalValor / totalQtd;
+  };
+
+  const normalizarQuantidadeReceita = (quantidade, unidadeIngrediente) => {
+    if (unidadeIngrediente === "g") return quantidade / 1000;
+    return quantidade;
+  };
+
+  const unidadeReceita = (unidadeIngrediente) => unidadeIngrediente === "g" ? "kg" : unidadeIngrediente;
+
+  const calcularCustoItemReceita = (item) => {
+    const ingrediente = ingredientes.find(i => String(i.id) === String(item.ingredienteId));
+    const custoUnitarioAtual = ingrediente ? custoMedio(ingrediente.id) : item.custoUnitario;
+    const custoAtual = Number(item.qtd || 0) * Number(custoUnitarioAtual || 0);
+
+    if (custoAtual > 0) return custoAtual;
+    return Number(item.custo || 0);
+  };
+
+  const calcularCustoReceita = (receitaId) => {
+    const receitaIdComparacao = String(receitaId);
+
+    return receita
+      .filter(item => String(item.receitaId ?? receitaPadraoIdAtual) === receitaIdComparacao)
+      .reduce((acc, item) => acc + calcularCustoItemReceita(item), 0);
+  };
+
+  const salvarItemReceita = async (ingrediente, quantidadeInformada) => {
+    if (!receitaSelecionada) {
+      setAlertMessage("Crie ou selecione uma receita antes de adicionar ingredientes.");
+      setAlertOpen(true);
+      return false;
+    }
+
+    if (!ingrediente) {
+      setAlertMessage("Selecione um ingrediente para adicionar na receita.");
+      setAlertOpen(true);
+      return false;
+    }
+
+    const qtd = parseNumero(quantidadeInformada);
+    if (!qtd) {
+      setAlertMessage("Informe a quantidade usada.");
+      setAlertOpen(true);
+      return false;
+    }
+
+    const custoUnitario = custoMedio(ingrediente.id);
+    const qtdNormalizada = normalizarQuantidadeReceita(qtd, ingrediente.unidade);
+    const custo = qtdNormalizada * custoUnitario;
+
+    const novoItem = {
+      receitaId: receitaSelecionada.id,
+      receitaNome: receitaSelecionada.nome,
+      ingredienteId: ingrediente.id,
+      nome: ingrediente.nome,
+      qtd: qtdNormalizada,
+      unidade: unidadeReceita(ingrediente.unidade),
+      custoUnitario,
+      custo,
+      data: new Date().toISOString()
+    };
+
+    const itemId = await db.receita.add(novoItem);
+    setReceita(prev => [...prev, { ...novoItem, id: itemId }]);
+    sincronizarFirebase("salvar item da receita no Firebase");
+
+    return true;
   };
 
   const adicionarNaReceita = (ingrediente) => {
@@ -402,39 +533,43 @@ export default function App() {
   const adicionarNaReceitaExec = async () => {
     const ingrediente = usarModalIngrediente;
     if (!ingrediente) return;
-    const receitaAtual = receitas.find(r => String(r.id) === String(receitaSelecionadaId));
-    if (!receitaAtual) return setAlertMessage("Selecione uma receita para adicionar este ingrediente."), setAlertOpen(true);
-    const qtd = parseNumero(usarModalQtd);
-    if (!qtd) return setAlertMessage("Informe a quantidade usada."), setAlertOpen(true);
+    const salvou = await salvarItemReceita(ingrediente, usarModalQtd);
 
-    const custoUnitario = custoMedio(ingrediente.id);
-    let qtdNormalizada = qtd;
-    if (ingrediente.unidade === "g") qtdNormalizada = qtd / 1000;
+    if (salvou) {
+      setUsarModalOpen(false);
+    }
+  };
 
-    const custo = qtdNormalizada * custoUnitario;
+  const adicionarIngredienteReceitaSelecionada = async () => {
+    const ingrediente = ingredientes.find(i => String(i.id) === String(ingredienteReceitaId));
+    const salvou = await salvarItemReceita(ingrediente, qtdIngredienteReceita);
 
-    const novoItem = {
-      receitaId: receitaAtual.id,
-      receitaNome: receitaAtual.nome,
-      nome: ingrediente.nome,
-      qtd: qtdNormalizada,
-      unidade: ingrediente.unidade === "g" ? "kg" : ingrediente.unidade,
-      custoUnitario,
-      custo,
-      data: new Date().toISOString()
-    };
-    const itemId = await db.receita.add(novoItem);
-    setReceita(prev => [...prev, { ...novoItem, id: itemId }]);
-    setUsarModalOpen(false);
-
-    sincronizarFirebase("salvar item da receita no Firebase");
+    if (salvou) {
+      setIngredienteReceitaId("");
+      setQtdIngredienteReceita("");
+    }
   };
 
   const removerDaReceita = async (itemId) => {
     await db.receita.delete(itemId);
     setReceita(prev => prev.filter(r => r.id !== itemId));
 
-    removerDoFirebase("receita", itemId, "remover item da receita no Firebase");
+    await removerDoFirebase("receita", itemId, "remover item da receita no Firebase");
+  };
+
+  const removerReceita = (receitaParaRemover) => {
+    if (!receitaParaRemover) return;
+
+    if (receitas.length <= 1) {
+      setAlertMessage("Mantenha pelo menos uma receita cadastrada.");
+      setAlertOpen(true);
+      return;
+    }
+
+    setConfirmMessage(`Excluir a receita "${receitaParaRemover.nome}" e todos os ingredientes dela?`);
+    setConfirmAction("delete-recipe");
+    setConfirmData({ receitaId: receitaParaRemover.id });
+    setTimeout(() => setConfirmOpen(true), 0);
   };
 
   const criarReceita = async () => {
@@ -485,32 +620,32 @@ export default function App() {
 
     let valorFinal = 0;
     let descricao = "";
+    let precoAplicado = 0;
+    let origemPreco = "config";
+    const qtd = parseNumero(qtdVenda);
+    const valorInformado = parseNumero(valorVenda);
 
     if (tipoVenda === "fatias") {
-      const qtd = parseNumero(qtdVenda);
-      const valor = parseNumero(valorVenda);
+      precoAplicado = valorInformado > 0 ? valorInformado : parseNumero(precoFatia);
+      origemPreco = valorInformado > 0 ? "manual" : "config";
 
-      if (valor > 0) {
-
-        valorFinal = valor;
-        descricao = `${qtd} fatia(s) - valor total R$ ${valor.toFixed(2)}`;
-      } else if (precoFatia) {
-
-        valorFinal = qtd * parseNumero(precoFatia);
-        descricao = `${qtd} fatia(s) R$ ${parseNumero(precoFatia).toFixed(2)}`;
+      if (precoAplicado > 0) {
+        valorFinal = qtd * precoAplicado;
+        descricao = `${qtd} fatia(s) @ R$ ${precoAplicado.toFixed(2)} / fatia${origemPreco === "manual" ? " (valor informado)" : ""}`;
       } else {
-        setAlertMessage("Configure o preço padrão da fatia ou informe o valor total.");
+        setAlertMessage("Configure o preço padrão da fatia ou informe o valor por fatia nesta venda.");
         setAlertOpen(true);
         return;
       }
     } else {
+      precoAplicado = valorInformado > 0 ? valorInformado : parseNumero(precoBolo);
+      origemPreco = valorInformado > 0 ? "manual" : "config";
 
-      const qtd = parseNumero(qtdVenda);
-      if (precoBolo) {
-        valorFinal = qtd * parseNumero(precoBolo);
-        descricao = `${qtd} kg @ R$ ${parseNumero(precoBolo).toFixed(2)} / kg`;
+      if (precoAplicado > 0) {
+        valorFinal = qtd * precoAplicado;
+        descricao = `${qtd} kg @ R$ ${precoAplicado.toFixed(2)} / kg${origemPreco === "manual" ? " (valor informado)" : ""}`;
       } else {
-        setAlertMessage("Configure o preço por kg do bolo inteiro.");
+        setAlertMessage("Configure o preço padrão por kg do bolo inteiro ou informe o valor por kg nesta venda.");
         setAlertOpen(true);
         return;
       }
@@ -518,8 +653,10 @@ export default function App() {
 
     const novaVenda = {
       tipo: tipoVenda,
-      quantidade: parseNumero(qtdVenda),
+      quantidade: qtd,
       valor: valorFinal,
+      precoUnitario: precoAplicado,
+      origemPreco,
       descricao,
       anotacao: anotacaoVenda || "",
       data: new Date(`${dataVenda}T00:00:00`).toISOString()
@@ -552,10 +689,12 @@ export default function App() {
       await db.ingredientes.delete(id);
       setIngredientes(prev => prev.filter((_, i) => i !== index));
       setCompras(prev => prev.filter(c => c.ingredienteId !== id));
-      removerDoFirebase("ingredientes", id, "remover ingrediente no Firebase");
-      comprasDoIngrediente.forEach((compra) => {
-        removerDoFirebase("compras", compra.id, "remover compras do ingrediente no Firebase");
-      });
+      await Promise.all([
+        removerDoFirebase("ingredientes", id, "remover ingrediente no Firebase"),
+        ...comprasDoIngrediente.map((compra) =>
+          removerDoFirebase("compras", compra.id, "remover compras do ingrediente no Firebase")
+        ),
+      ]);
       if (editIndex === index) {
         setNome("");
         setUnidade("kg");
@@ -569,7 +708,34 @@ export default function App() {
       const { vendaId } = confirmData;
       await db.vendas.delete(vendaId);
       setVendas(prev => prev.filter(v => v.id !== vendaId));
-      removerDoFirebase("vendas", vendaId, "remover venda no Firebase");
+      await removerDoFirebase("vendas", vendaId, "remover venda no Firebase");
+    } else if (confirmAction === "delete-recipe" && confirmData) {
+      const { receitaId } = confirmData;
+      const receitaIdComparacao = String(receitaId);
+      const receitaPadraoId = receitas[0]?.id ?? receitaId;
+      const itensDaReceita = receita.filter(item =>
+        String(item.receitaId ?? receitaPadraoId) === receitaIdComparacao
+      );
+      const idsItens = itensDaReceita.map(item => item.id);
+      const receitasRestantes = receitas.filter(r => String(r.id) !== receitaIdComparacao);
+      const receitaSelecionadaRemovida = String(receitaSelecionadaIdAtual) === receitaIdComparacao;
+
+      await db.receitas.delete(receitaId);
+      if (idsItens.length > 0) {
+        await db.receita.bulkDelete(idsItens);
+      }
+
+      setReceitas(receitasRestantes);
+      setReceita(prev => prev.filter(item => !idsItens.includes(item.id)));
+      if (receitaSelecionadaRemovida) {
+        setReceitaSelecionadaId(receitasRestantes[0]?.id ?? null);
+      }
+      await Promise.all([
+        removerDoFirebase("receitas", receitaId, "remover receita no Firebase"),
+        ...itensDaReceita.map((item) =>
+          removerDoFirebase("receita", item.id, "remover itens da receita no Firebase")
+        ),
+      ]);
     }
     setConfirmOpen(false);
     setConfirmAction(null);
@@ -584,9 +750,31 @@ export default function App() {
   const itensReceitaSelecionada = receita.filter(item =>
     receitaSelecionadaIdAtual && String(item.receitaId ?? receitaPadraoIdAtual) === String(receitaSelecionadaIdAtual)
   );
-  const custoTotal = itensReceitaSelecionada.reduce((acc, r) => acc + r.custo, 0);
+  const custoTotal = receitaSelecionadaIdAtual ? calcularCustoReceita(receitaSelecionadaIdAtual) : 0;
   const vendaTotal = vendas.reduce((acc, v) => acc + v.valor, 0);
   const lucro = vendaTotal - custoTotal;
+  const ticketMedio = vendas.length > 0 ? vendaTotal / vendas.length : 0;
+  const margemLucro = vendaTotal > 0 ? (lucro / vendaTotal) * 100 : 0;
+  const resumoReceitas = receitas.map((r) => {
+    const itens = receita.filter(item =>
+      String(item.receitaId ?? receitaPadraoIdAtual) === String(r.id)
+    );
+
+    return {
+      ...r,
+      custo: calcularCustoReceita(r.id),
+      totalItens: itens.length,
+    };
+  });
+  const custoCatalogoReceitas = resumoReceitas.reduce((acc, r) => acc + r.custo, 0);
+  const ingredienteReceitaSelecionado = ingredientes.find(i => String(i.id) === String(ingredienteReceitaId));
+  const qtdIngredienteReceitaNumero = parseNumero(qtdIngredienteReceita);
+  const custoPrevistoIngredienteReceita = ingredienteReceitaSelecionado && qtdIngredienteReceitaNumero
+    ? normalizarQuantidadeReceita(qtdIngredienteReceitaNumero, ingredienteReceitaSelecionado.unidade) * custoMedio(ingredienteReceitaSelecionado.id)
+    : 0;
+  const unidadeIngredienteReceita = ingredienteReceitaSelecionado
+    ? unidadeReceita(ingredienteReceitaSelecionado.unidade)
+    : "";
 
   const inicioSemana = new Date();
   inicioSemana.setDate(inicioSemana.getDate() - 7);
@@ -659,10 +847,10 @@ export default function App() {
                 <div className="border-2 border-rose-200 p-3 rounded-lg bg-rose-50/80 sm:col-span-2 xl:col-span-1">
                   <div className="flex gap-2 items-center mb-2">
                     <input id="usePrecoPorUnidade" type="checkbox" checked={usePrecoPorUnidade} onChange={e => setUsePrecoPorUnidade(e.target.checked)} className="w-4 h-4 cursor-pointer accent-rose-800" />
-                    <label htmlFor="usePrecoPorUnidade" className="text-xs font-semibold cursor-pointer flex-1 text-gray-700">Valor por unidade</label>
+                    <label htmlFor="usePrecoPorUnidade" className="text-xs font-semibold cursor-pointer flex-1 text-gray-700">{labelPrecoPorUnidade(unidade)}</label>
                   </div>
                   {usePrecoPorUnidade ? (
-                    <input type="text" className="input border-2 border-rose-200 focus:border-rose-700 mt-1 text-sm" placeholder="Valor por unidade" value={precoUnitario} onChange={e => setPrecoUnitario(e.target.value)} />
+                    <input type="text" className="input border-2 border-rose-200 focus:border-rose-700 mt-1 text-sm" placeholder={labelPrecoPorUnidade(unidade)} value={precoUnitario} onChange={e => setPrecoUnitario(e.target.value)} />
                   ) : (
                     <input type="text" className="input border-2 border-rose-200 focus:border-rose-700 mt-1 text-sm" placeholder="Valor gasto" value={precoCompra} onChange={e => setPrecoCompra(e.target.value)} />
                   )}
@@ -712,7 +900,7 @@ export default function App() {
               <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
                 <div>
                   <h3 className="font-bold text-lg text-rose-950">🧁 Receitas</h3>
-                  <p className="text-xs text-gray-500 mt-1">Selecione uma receita e use o botão ✅ nos ingredientes para montar a ficha.</p>
+                  <p className="text-xs text-gray-500 mt-1">Selecione uma receita e adicione os ingredientes usados na ficha.</p>
                 </div>
                 <p className="text-sm font-bold text-rose-900 shrink-0">Custo: R$ {custoTotal.toFixed(2)}</p>
               </div>
@@ -739,21 +927,98 @@ export default function App() {
                 })}
               </div>
 
+              {receitaSelecionada && (
+                <div className="border border-rose-100 bg-rose-50/70 rounded-lg p-3 sm:p-4 mb-4">
+                  <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 mb-3">
+                    <div>
+                      <h4 className="font-bold text-sm text-rose-950">Adicionar ingrediente em {receitaSelecionada.nome}</h4>
+                      <p className="text-xs text-gray-500 mt-1">O custo usa o custo médio atual do ingrediente.</p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-bold text-rose-900 bg-white rounded-md px-2 py-1 border border-rose-100 w-fit">
+                        Total: R$ {custoTotal.toFixed(2)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => removerReceita(receitaSelecionada)}
+                        className="small-btn bg-red-100 text-red-700 hover:bg-red-200 font-semibold text-xs rounded-md"
+                        aria-label={`Excluir receita ${receitaSelecionada.nome}`}
+                      >
+                        🗑️ Receita
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,0.9fr)_auto] gap-3 items-end">
+                    <div>
+                      <label className="text-xs font-semibold text-gray-600 block mb-1">Ingrediente</label>
+                      <select
+                        className="input border-2 border-rose-200 focus:border-rose-700 bg-white"
+                        value={ingredienteReceitaId}
+                        onChange={e => setIngredienteReceitaId(e.target.value)}
+                      >
+                        <option value="">Selecione</option>
+                        {ingredientes.map((ingrediente) => (
+                          <option key={`receita-ing-${ingrediente.id}`} value={ingrediente.id}>
+                            {ingrediente.nome}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-semibold text-gray-600 block mb-1">
+                        Quantidade {unidadeIngredienteReceita ? `(${unidadeIngredienteReceita})` : ""}
+                      </label>
+                      <input
+                        type="text"
+                        className="input border-2 border-rose-200 focus:border-rose-700"
+                        placeholder="Ex: 0.5"
+                        value={qtdIngredienteReceita}
+                        onChange={e => setQtdIngredienteReceita(e.target.value)}
+                      />
+                    </div>
+
+                    <div className="min-h-[2.75rem] rounded-lg border border-rose-100 bg-white px-3 py-2 flex flex-col justify-center">
+                      <span className="text-[11px] font-semibold text-gray-500">Custo previsto</span>
+                      <span className="text-sm font-bold text-rose-950">R$ {custoPrevistoIngredienteReceita.toFixed(2)}</span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={adicionarIngredienteReceitaSelecionada}
+                      className="btn btn-primary md:min-w-36"
+                    >
+                      + Ingrediente
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {itensReceitaSelecionada.length === 0 ? (
                 <p className="text-sm text-gray-400 text-center py-8">
                   {receitaSelecionada ? `Sem ingredientes em ${receitaSelecionada.nome}` : "Crie uma receita para começar"}
                 </p>
               ) : (
                 <div className="space-y-2">
-                  {itensReceitaSelecionada.map((r) => (
-                    <div key={`rec-${r.id}`} className="border-b border-rose-100 pb-3 last:border-b-0 hover:bg-rose-50 p-3 rounded-lg transition flex flex-col sm:flex-row lg:flex-col xl:flex-row gap-3 justify-between items-stretch sm:items-center lg:items-stretch xl:items-center">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-gray-800 break-words">{r.nome}</p>
-                        <p className="text-xs text-gray-500 mt-1 break-words">{r.qtd} {r.unidade || "un"} • Custo: <span className="font-semibold text-rose-900">R$ {r.custo.toFixed(2)}</span></p>
+                  {itensReceitaSelecionada.map((r) => {
+                    const custoItem = calcularCustoItemReceita(r);
+                    const ingredienteAtual = ingredientes.find(i => String(i.id) === String(r.ingredienteId));
+                    const custoUnitarioAtual = ingredienteAtual ? custoMedio(ingredienteAtual.id) : r.custoUnitario;
+
+                    return (
+                      <div key={`rec-${r.id}`} className="border-b border-rose-100 pb-3 last:border-b-0 hover:bg-rose-50 p-3 rounded-lg transition flex flex-col sm:flex-row lg:flex-col xl:flex-row gap-3 justify-between items-stretch sm:items-center lg:items-stretch xl:items-center">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-gray-800 break-words">{r.nome}</p>
+                          <p className="text-xs text-gray-500 mt-1 break-words">
+                            {r.qtd} {r.unidade || "un"} • Custo: <span className="font-semibold text-rose-900">R$ {custoItem.toFixed(2)}</span>
+                            {custoUnitarioAtual > 0 && <span> • Base R$ {Number(custoUnitarioAtual).toFixed(2)} / {r.unidade || "un"}</span>}
+                          </p>
+                        </div>
+                        <button onClick={() => removerDaReceita(r.id)} className="small-btn bg-red-100 text-red-700 hover:bg-red-200 font-semibold rounded-md self-start sm:self-center lg:self-start xl:self-center" aria-label={`Remover ${r.nome} da receita`}>🗑️</button>
                       </div>
-                      <button onClick={() => removerDaReceita(r.id)} className="small-btn bg-red-100 text-red-700 hover:bg-red-200 font-semibold rounded-md self-start sm:self-center lg:self-start xl:self-center" aria-label={`Remover ${r.nome} da receita`}>🗑️</button>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -764,16 +1029,55 @@ export default function App() {
               <h2 className="font-bold text-xl mb-4">💰 Resumo Financeiro</h2>
               <div className="space-y-3 text-sm font-semibold">
                 <div className="bg-white/15 rounded-lg p-3 border border-white/10">
-                  <p className="text-rose-100">Custo da receita</p>
+                  <p className="text-rose-100">Custo da receita selecionada</p>
+                  <p className="text-xs text-white/75 mt-1 break-words">{receitaSelecionada?.nome || "Nenhuma receita"}</p>
                   <p className="text-2xl font-bold break-words">R$ {custoTotal.toFixed(2)}</p>
                 </div>
                 <div className="bg-white/15 rounded-lg p-3 border border-white/10">
                   <p className="text-rose-100">Vendas realizadas</p>
                   <p className="text-2xl font-bold break-words">R$ {vendaTotal.toFixed(2)}</p>
                 </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="bg-white/10 rounded-lg p-2 border border-white/10 min-w-0">
+                    <p className="text-rose-100 text-xs">Ticket médio</p>
+                    <p className="font-bold break-words">R$ {ticketMedio.toFixed(2)}</p>
+                  </div>
+                  <div className="bg-white/10 rounded-lg p-2 border border-white/10 min-w-0">
+                    <p className="text-rose-100 text-xs">Margem estimada</p>
+                    <p className="font-bold break-words">{margemLucro.toFixed(1)}%</p>
+                  </div>
+                </div>
                 <div className="bg-white/20 rounded-lg p-3 border border-white/60">
                   <p className="text-white text-xs">LUCRO TOTAL</p>
                   <p className="text-2xl sm:text-3xl font-bold break-words">{lucro >= 0 ? '✅' : '❌'} R$ {Math.abs(lucro).toFixed(2)}</p>
+                </div>
+              </div>
+              <div className="mt-4 pt-4 border-t border-white/30">
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <p className="font-bold text-sm">Custos por receita</p>
+                  <p className="text-xs text-white/75">Catálogo: R$ {custoCatalogoReceitas.toFixed(2)}</p>
+                </div>
+                <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                  {resumoReceitas.map((r) => {
+                    const selecionada = String(r.id) === String(receitaSelecionadaIdAtual);
+
+                    return (
+                      <button
+                        key={`resumo-receita-${r.id}`}
+                        type="button"
+                        onClick={() => setReceitaSelecionadaId(r.id)}
+                        className={`w-full text-left rounded-lg px-3 py-2 border transition ${selecionada ? "bg-white text-rose-950 border-white" : "bg-white/10 text-white border-white/10 hover:bg-white/20"}`}
+                      >
+                        <span className="flex items-center justify-between gap-3">
+                          <span className="font-semibold text-sm break-words">{r.nome}</span>
+                          <span className="font-bold text-sm shrink-0">R$ {r.custo.toFixed(2)}</span>
+                        </span>
+                        <span className={selecionada ? "text-xs text-gray-500" : "text-xs text-white/70"}>
+                          {r.totalItens} ingrediente(s)
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
               <hr className="my-4 border-white/40" />
@@ -831,26 +1135,36 @@ export default function App() {
                 <h3 className="font-bold text-lg mb-4 text-rose-950">🛍️ Registrar Venda</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
                   <label className="flex items-center gap-2 cursor-pointer p-3 bg-white rounded-lg border-2 border-rose-200 hover:border-rose-500 transition">
-                    <input type="radio" value="fatias" checked={tipoVenda === "fatias"} onChange={e => setTipoVenda(e.target.value)} name="tipoVenda" className="accent-rose-800" />
+                    <input type="radio" value="fatias" checked={tipoVenda === "fatias"} onChange={e => { setTipoVenda(e.target.value); setValorVenda(""); }} name="tipoVenda" className="accent-rose-800" />
                     <span className="text-sm font-semibold text-gray-700">🍰 Fatias</span>
                   </label>
                   <label className="flex items-center gap-2 cursor-pointer p-3 bg-white rounded-lg border-2 border-rose-200 hover:border-rose-500 transition">
-                    <input type="radio" value="bolo" checked={tipoVenda === "bolo"} onChange={e => setTipoVenda(e.target.value)} name="tipoVenda" className="accent-rose-800" />
+                    <input type="radio" value="bolo" checked={tipoVenda === "bolo"} onChange={e => { setTipoVenda(e.target.value); setValorVenda(""); }} name="tipoVenda" className="accent-rose-800" />
                     <span className="text-sm font-semibold text-gray-700">🎂 Bolo Inteiro</span>
                   </label>
                 </div>
 
                 <div className="space-y-3">
                   <input type="text" className="input border-2 border-rose-200 focus:border-rose-700" placeholder={tipoVenda === "bolo" ? "Quantidade (kg, ex: 2.5)" : "Quantidade (ex: 3)"} value={qtdVenda} onChange={e => setQtdVenda(e.target.value)} />
-                  {tipoVenda === "fatias" && (
-                    <input type="text" className="input border-2 border-rose-200 focus:border-rose-700" placeholder="Valor total (opcional - usa R$ por fatia se vazio)" value={valorVenda} onChange={e => setValorVenda(e.target.value)} />
-                  )}
+                  <div>
+                    <label htmlFor="valorVendaManual" className="text-xs font-semibold text-gray-600 block mb-1">
+                      {tipoVenda === "bolo" ? "Valor por kg nesta venda" : "Valor por fatia nesta venda"}
+                    </label>
+                    <input
+                      id="valorVendaManual"
+                      type="text"
+                      className="input border-2 border-rose-200 focus:border-rose-700"
+                      placeholder={tipoVenda === "bolo" ? `Opcional - padrão R$ ${parseNumero(precoBolo).toFixed(2)} / kg` : `Opcional - padrão R$ ${parseNumero(precoFatia).toFixed(2)} / fatia`}
+                      value={valorVenda}
+                      onChange={e => setValorVenda(e.target.value)}
+                    />
+                  </div>
                   <input type="date" className="input border-2 border-rose-200 focus:border-rose-700" value={dataVenda} onChange={e => setDataVenda(e.target.value)} />
                   <textarea className="input border-2 border-rose-200 focus:border-rose-700 resize-none" placeholder="Anotação (ex: Cliente: Maria, Entrega 14h)" value={anotacaoVenda} onChange={e => setAnotacaoVenda(e.target.value)} rows="3" />
                 </div>
                 <div className="flex flex-col sm:flex-row gap-3 mt-4">
                   <button onClick={registrarVenda} className="btn btn-primary flex-1">✅ Registrar</button>
-                  <button onClick={() => { setShowNovaVenda(false); setAnotacaoVenda(""); setDataVenda(new Date().toISOString().split('T')[0]); }} className="btn flex-1 bg-gray-200 text-gray-700 hover:bg-gray-300">❌ Cancelar</button>
+                  <button onClick={() => { setShowNovaVenda(false); setQtdVenda(""); setValorVenda(""); setAnotacaoVenda(""); setDataVenda(new Date().toISOString().split('T')[0]); }} className="btn flex-1 bg-gray-200 text-gray-700 hover:bg-gray-300">❌ Cancelar</button>
                 </div>
               </div>
             ) : (
@@ -887,9 +1201,14 @@ export default function App() {
       </main>
       <Modal isOpen={compraModalOpen} onClose={() => setCompraModalOpen(false)} title={compraModalIngrediente ? `💳 Registrar compra — ${compraModalIngrediente.nome}` : 'Registrar compra'}>
         <div className="space-y-4">
+          {compraModalAviso && (
+            <p className="text-sm font-semibold text-rose-900 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2">
+              {compraModalAviso}
+            </p>
+          )}
           <div>
-            <label className="text-sm font-bold text-gray-700 block mb-2">Preço por unidade (opcional)</label>
-            <input className="input border-2 border-rose-200 focus:border-rose-700" value={compraModalPrecoUnit} onChange={e => setCompraModalPrecoUnit(e.target.value)} placeholder={compraModalIngrediente?.unidade === 'g' ? 'R$ / kg (ex: 12.5)' : 'R$ / unidade'} />
+            <label className="text-sm font-bold text-gray-700 block mb-2">{labelPrecoPorUnidade(compraModalIngrediente?.unidade)} (opcional)</label>
+            <input className="input border-2 border-rose-200 focus:border-rose-700" value={compraModalPrecoUnit} onChange={e => setCompraModalPrecoUnit(e.target.value)} placeholder={`R$ / ${compraModalIngrediente?.unidade === 'kg' || compraModalIngrediente?.unidade === 'g' ? 'kg' : compraModalIngrediente?.unidade || 'unidade'}`} />
           </div>
           <div>
             <label className="text-sm font-bold text-gray-700 block mb-2">Quantidade ({compraModalIngrediente?.unidade || ''})</label>

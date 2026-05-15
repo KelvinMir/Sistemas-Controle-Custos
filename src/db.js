@@ -26,6 +26,42 @@ const getFirestoreDocumentId = (item) => {
   return id === undefined || id === null ? null : String(id);
 };
 
+const getFirestoreDocumentIdFromItemOrId = (itemOrId) => {
+  const documentId = typeof itemOrId === "object" && itemOrId !== null
+    ? getFirestoreDocumentId(itemOrId)
+    : itemOrId;
+
+  if (documentId === undefined || documentId === null || documentId === "") {
+    return null;
+  }
+
+  return String(documentId);
+};
+
+const getPendingDeleteKey = (coll, documentId) => `${coll}/${String(documentId)}`;
+
+const getPendingDeleteIds = async (coll) => {
+  const pendingDeletes = await db.syncDeletes
+    .where("coll")
+    .equals(coll)
+    .toArray();
+
+  return new Set(pendingDeletes.map((item) => String(item.documentId)));
+};
+
+const markPendingDelete = async (coll, documentId) => {
+  await db.syncDeletes.put({
+    id: getPendingDeleteKey(coll, documentId),
+    coll,
+    documentId: String(documentId),
+    deletedAt: new Date().toISOString(),
+  });
+};
+
+const clearPendingDelete = async (coll, documentId) => {
+  await db.syncDeletes.delete(getPendingDeleteKey(coll, documentId));
+};
+
 const normalizeFirestoreDoc = (coll, snapshotDoc) => {
   const data = snapshotDoc.data();
 
@@ -59,30 +95,46 @@ export const saveToFirestore = async (coll, item) => {
 };
 
 export const deleteFromFirestore = async (coll, itemOrId) => {
-  if (!(await ensureFirebaseReady())) return;
+  const documentId = getFirestoreDocumentIdFromItemOrId(itemOrId);
 
-  const documentId = typeof itemOrId === "object"
-    ? getFirestoreDocumentId(itemOrId)
-    : itemOrId;
-
-  if (documentId === undefined || documentId === null) {
+  if (!documentId) {
     throw new Error(`Item sem id/chave não pode ser removido do Firestore em ${coll}.`);
   }
 
-  await deleteDoc(doc(dbFirestore, coll, String(documentId)));
+  await markPendingDelete(coll, documentId);
+
+  if (!(await ensureFirebaseReady())) return;
+
+  await deleteDoc(doc(dbFirestore, coll, documentId));
+  await clearPendingDelete(coll, documentId);
 };
 
 const syncCollectionToFirestore = async (coll) => {
+  const pendingDeleteIds = await getPendingDeleteIds(coll);
   const data = await db[coll].toArray();
-  await Promise.all(data.map((item) => saveToFirestore(coll, item)));
+  const activeData = data.filter((item) => {
+    const documentId = getFirestoreDocumentId(item);
+    return documentId && !pendingDeleteIds.has(String(documentId));
+  });
+
+  await Promise.all(activeData.map((item) => saveToFirestore(coll, item)));
 };
 
 const applyRemoteCollection = async (coll, data) => {
-  const localCount = await db[coll].count();
+  const pendingDeleteIds = await getPendingDeleteIds(coll);
+  const remoteData = data.filter((item) => {
+    const documentId = getFirestoreDocumentId(item);
+    return documentId && !pendingDeleteIds.has(String(documentId));
+  });
+  const localData = await db[coll].toArray();
+  const activeLocalCount = localData.filter((item) => {
+    const documentId = getFirestoreDocumentId(item);
+    return documentId && !pendingDeleteIds.has(String(documentId));
+  }).length;
 
-  if (data.length === 0 && localCount > 0) {
+  if (remoteData.length === 0 && activeLocalCount > 0) {
     console.warn(
-      `Firestore retornou ${coll} vazio, mas há ${localCount} registro(s) local(is). Mantendo dados locais.`
+      `Firestore retornou ${coll} vazio, mas há ${activeLocalCount} registro(s) local(is). Mantendo dados locais.`
     );
 
     syncCollectionToFirestore(coll).catch((error) => {
@@ -92,7 +144,7 @@ const applyRemoteCollection = async (coll, data) => {
     return;
   }
 
-  await replaceLocalCollection(coll, data);
+  await replaceLocalCollection(coll, remoteData);
 };
 
 export const db = new Dexie("ControleCustos");
@@ -132,9 +184,40 @@ db.version(2).stores({
   );
 });
 
+db.version(3).stores({
+  ingredientes: "id, nome, unidade",
+  compras: "++id, ingredienteId, data",
+  receita: "++id, receitaId, data",
+  receitas: "++id, nome, data",
+  vendas: "++id, data",
+  config: "chave",
+  syncDeletes: "id, coll, documentId, deletedAt",
+});
+
+export const syncPendingDeletesToFirestore = async () => {
+  const pendingDeletes = await db.syncDeletes.toArray();
+
+  if (pendingDeletes.length === 0) return;
+  if (!(await ensureFirebaseReady())) return;
+
+  const results = await Promise.allSettled(
+    pendingDeletes.map(async ({ id, coll, documentId }) => {
+      await deleteDoc(doc(dbFirestore, coll, String(documentId)));
+      await db.syncDeletes.delete(id);
+    })
+  );
+
+  const failed = results.find((result) => result.status === "rejected");
+  if (failed) {
+    throw failed.reason;
+  }
+};
+
 export const syncFromFirestore = async () => {
   if (!(await ensureFirebaseReady())) return;
   try {
+    await syncPendingDeletesToFirestore();
+
     for (const coll of collections) {
       const querySnapshot = await getDocs(collection(dbFirestore, coll));
       const data = querySnapshot.docs.map((snapshotDoc) =>
@@ -172,6 +255,7 @@ export const migrateToFirestore = async () => {
 export const syncToFirestore = async () => {
   if (!(await ensureFirebaseReady())) return;
   try {
+    await syncPendingDeletesToFirestore();
     await Promise.all(collections.map((coll) => syncCollectionToFirestore(coll)));
   } catch (error) {
     console.error("Erro ao sincronizar para Firestore:", error);
