@@ -1,102 +1,75 @@
-🎂 Sistema de Controle de Custos para Confeitaria
+# Solary Cacau - Sistema de Controle de Custos
 
-Sistema web desenvolvido para auxiliar no controle de custos de produção de bolos confeitados, considerando a variação de preços dos ingredientes ao longo do tempo.
+Sistema web em React para controlar custos, receitas e vendas de uma confeitaria. A aplicacao calcula custo medio dos ingredientes, custo das receitas, vendas realizadas, lucro estimado e indicadores semanais.
 
-Este repositório foi reorganizado como um projeto React usando Vite. Arquivos principais:
-- [src/App.jsx](src/App.jsx)
-- [src/main.jsx](src/main.jsx)
-- [index.html](index.html)
-- [package.json](package.json)
+## Funcionalidades
 
-Instalação e execução (local):
+- Cadastro, edicao e exclusao de ingredientes.
+- Registro de compras por ingrediente, com atualizacao do custo medio.
+- Criacao e exclusao de receitas.
+- Adicao e remocao de ingredientes em receitas.
+- Configuracao de preco por kg, preco por fatia e fatias por bolo.
+- Cadastro, edicao e exclusao de vendas.
+- Resumo financeiro com vendas, lucro, ticket medio, margem estimada e resultados da semana.
+- Persistencia local com IndexedDB via Dexie.
+- Sincronizacao em nuvem com Firebase Firestore.
+
+## Persistencia e sincronizacao
+
+O app salva primeiro no IndexedDB para manter a experiencia rapida no dispositivo. Em seguida, cada operacao envia ao Firestore apenas o documento alterado:
+
+- adicionar/atualizar usa `setDoc` no documento afetado;
+- excluir usa `deleteDoc` no documento afetado;
+- exclusoes pendentes ficam registradas localmente para evitar que dados antigos voltem em uma sincronizacao posterior.
+
+O sync geral ainda existe para inicializacao e migracao de dados locais, mas as acoes normais de CRUD usam gravacao por item.
+
+## Tecnologias
+
+- React
+- Vite
+- Tailwind CSS
+- Dexie / IndexedDB
+- Firebase Auth anonimo
+- Firebase Firestore
+
+## Como executar
 
 ```bash
 npm install
 npm run dev
 ```
 
-Abra o endereço mostrado no terminal (ex.: http://localhost:5173).
+Abra a URL exibida pelo Vite, por exemplo:
 
-📌 Sobre o projeto
+```text
+http://localhost:5173/Sistemas-Controle-Custos/
+```
 
-Este projeto foi criado com o objetivo de resolver um problema real:
-o custo dos insumos varia a cada compra, enquanto o preço de venda do produto permanece fixo.
+## Build
 
-A aplicação permite registrar compras de ingredientes, calcular automaticamente o custo médio de cada item e determinar o custo total de uma receita, além do lucro obtido.
+```bash
+npm run build
+```
 
-🚀 Funcionalidades
-	Cadastro de ingredientes com unidade de medida
-	Registro de compras com valores variáveis
-	Cálculo de custo médio ponderado
-	Montagem de receitas com base no consumo de ingredientes
-	Cálculo automático de:
-	Custo total do bolo
-	Lucro por venda
-	Controle financeiro semanal:
-	Total gasto
-	Ganho estimado
+## Estrutura principal
 
-🧠 Conceitos aplicados
-	Custo médio ponderado
-	Gestão de insumos
-	Modelagem de dados
-	Manipulação de estado no React
-	Persistência com LocalStorage
+```text
+src/
+  App.jsx
+  db.js
+  firebase.js
+  components/
+    FinancialSummary.jsx
+    Modal.jsx
+    SalesPanel.jsx
+  utils/
+    dates.js
+    numbers.js
+```
 
-🛠️ Tecnologias utilizadas
-	React
-	Tailwind CSS
-	JavaScript (ES6+)
-	IndexedDB (via Dexie)
-	Firebase Firestore (para sincronização entre dispositivos)
+## Observacoes
 
-📂 Estrutura do projeto
-	src/
-	 ├── App.jsx
-	 ├── components/
-	 ├── styles/
+As regras do Firestore permitem leitura e escrita apenas para usuarios autenticados. O app usa login anonimo para habilitar a sincronizacao sem tela de cadastro.
 
-▶️ Como executar o projeto
-	# Clone o repositório
-	git clone https://github.com/seu-usuario/seu-repo
-	
-	# Acesse a pasta
-	cd seu-repo
-	
-	# Instale as dependências
-	npm install
-	
-	# Execute o projeto
-	npm run dev
-
-📊 Exemplo de uso
-	Cadastre um ingrediente (ex: farinha, açúcar, leite)
-	Informe o valor pago e a quantidade comprada
-	Registre novas compras conforme os preços variam
-	Monte uma receita informando o consumo de cada item
-	Defina o preço de venda
-	Visualize automaticamente:
-	custo do bolo
-	lucro
-	desempenho semanal
-🎯 Objetivo
-
-	Este projeto foi desenvolvido com foco em:
-	
-	Prática de desenvolvimento front-end
-	Aplicação de regras de negócio reais
-	Construção de um sistema com valor prático
-	Composição de portfólio profissional
-	
-📌 Melhorias futuras
-	Interface com modais (substituir prompts)
-	Dashboard com gráficos
-	Controle de estoque
-	Sistema de vendas
-	Backend com API e banco de dados
-	Autenticação de usuários
-	
-👨‍💻 Autor
-
-Kelvin Rodrigues de Miranda
-React/React Native Developer
+Autor: Kelvin Rodrigues de Miranda

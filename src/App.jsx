@@ -3,12 +3,17 @@ import React from "react";
 import {
   db,
   deleteFromFirestore,
+  saveToFirestore,
   syncFromFirestore,
   syncToFirestore,
   setupRealtimeSync,
 } from "./db";
+import FinancialSummary from "./components/FinancialSummary";
 import Modal from "./components/Modal";
+import SalesPanel from "./components/SalesPanel";
 import sunflowerIcon from "./img/sunflower-svgrepo-com.svg";
+import { dataInputParaISO, formatarDataLocal, isoParaDataInput } from "./utils/dates";
+import { parseNumero } from "./utils/numbers";
 
 
 export default function App() {
@@ -51,6 +56,7 @@ export default function App() {
   const [alertOpen, setAlertOpen] = useState(false);
   const [alertMessage, setAlertMessage] = useState("");
   const [firebaseStatus, setFirebaseStatus] = useState("idle");
+  const [operacaoAtual, setOperacaoAtual] = useState("");
   const firebaseSyncIdRef = useRef(0);
 
   // VENDAS
@@ -60,11 +66,12 @@ export default function App() {
   const [showConfigVendas, setShowConfigVendas] = useState(false);
   const [vendas, setVendas] = useState([]);
   const [showNovaVenda, setShowNovaVenda] = useState(false);
+  const [vendaEditandoId, setVendaEditandoId] = useState(null);
   const [tipoVenda, setTipoVenda] = useState("fatias"); // "fatias" ou "bolo"
   const [qtdVenda, setQtdVenda] = useState("");
   const [valorVenda, setValorVenda] = useState("");
   const [anotacaoVenda, setAnotacaoVenda] = useState("");
-  const [dataVenda, setDataVenda] = useState(new Date().toISOString().split('T')[0]); // YYYY-MM-DD
+  const [dataVenda, setDataVenda] = useState(formatarDataLocal()); // YYYY-MM-DD
 
 
 
@@ -197,17 +204,6 @@ export default function App() {
     };
   }, []);
 
-  const parseNumero = (valor) => {
-    if (valor === null || valor === undefined) return 0;
-    const texto = String(valor).trim().replace(/[^\d,.-]/g, "");
-    if (!texto) return 0;
-    const normalizado = texto.includes(",")
-      ? texto.replace(/\./g, "").replace(",", ".")
-      : texto;
-    const numero = Number(normalizado);
-    return Number.isFinite(numero) ? numero : 0;
-  };
-
   const normalizarNomeIngrediente = (valor) =>
     String(valor || "")
       .trim()
@@ -276,7 +272,9 @@ export default function App() {
           mostrarErroFirebase(error, acao);
         }
       })
-      .finally(() => clearTimeout(timeoutId));
+      .finally(() => {
+        clearTimeout(timeoutId);
+      });
 
     return syncPromise;
   };
@@ -292,18 +290,43 @@ export default function App() {
         });
     });
 
-  const removerDoFirebase = async (coll, itemOrId, acao) => {
+  const executarOperacaoBanco = async (acao, operacao) => {
+    const syncId = firebaseSyncIdRef.current + 1;
+    firebaseSyncIdRef.current = syncId;
     setFirebaseStatus("syncing");
+    setOperacaoAtual(acao);
 
     try {
-      await deleteFromFirestore(coll, itemOrId);
-      setFirebaseStatus("synced");
+      await operacao();
+      if (firebaseSyncIdRef.current === syncId) {
+        setFirebaseStatus("synced");
+      }
       return true;
     } catch (error) {
-      mostrarErroFirebase(error, acao);
+      if (firebaseSyncIdRef.current === syncId) {
+        mostrarErroFirebase(error, acao);
+      }
       return false;
+    } finally {
+      if (firebaseSyncIdRef.current === syncId) {
+        setOperacaoAtual("");
+      }
     }
   };
+
+  const salvarItensNoFirebase = async (itens, acao) => {
+    const itensValidos = itens.filter(Boolean);
+    if (itensValidos.length === 0) return true;
+
+    return executarOperacaoBanco(acao, () =>
+      Promise.all(
+        itensValidos.map(({ coll, item }) => saveToFirestore(coll, item))
+      )
+    );
+  };
+
+  const removerDoFirebase = async (coll, itemOrId, acao) =>
+    executarOperacaoBanco(acao, () => deleteFromFirestore(coll, itemOrId));
 
   const salvarIngrediente = async () => {
     const nomeLimpo = nome.trim();
@@ -314,6 +337,7 @@ export default function App() {
     const qtdNum = parseNumero(qtdCompra);
     const ingredienteEditado = editIndex !== null ? ingredientes[editIndex] : null;
     const ingredienteExistente = encontrarIngredientePorNome(nomeLimpo, ingredienteEditado?.id ?? null);
+    const itensParaSalvar = [];
 
     if (ingredienteExistente) {
       abrirModalCompra(ingredienteExistente, {
@@ -329,8 +353,10 @@ export default function App() {
 
     if (editIndex !== null) {
       const ing = ingredientes[editIndex];
-      await db.ingredientes.update(ing.id, { nome: nomeLimpo, unidade });
-      setIngredientes(prev => prev.map((item, i) => i === editIndex ? { ...item, nome: nomeLimpo, unidade } : item));
+      const ingredienteAtualizado = { ...ing, nome: nomeLimpo, unidade };
+      await db.ingredientes.put(ingredienteAtualizado);
+      setIngredientes(prev => prev.map((item, i) => i === editIndex ? ingredienteAtualizado : item));
+      itensParaSalvar.push({ coll: "ingredientes", item: ingredienteAtualizado });
 
       const precoFinalEdit = usePrecoPorUnidade && precoUnitNum > 0 ? precoUnitNum * qtdNum : precoNum;
       if (precoFinalEdit > 0 && qtdNum > 0) {
@@ -344,7 +370,9 @@ export default function App() {
           data: new Date().toISOString()
         };
         const compraId = await db.compras.add(novaCompra);
-        setCompras(prev => [...prev, { ...novaCompra, id: compraId }]);
+        const compraComId = { ...novaCompra, id: compraId };
+        setCompras(prev => [...prev, compraComId]);
+        itensParaSalvar.push({ coll: "compras", item: compraComId });
       }
       setEditIndex(null);
     } else {
@@ -362,6 +390,7 @@ export default function App() {
       const novoIngrediente = { id, nome: nomeLimpo, unidade };
       await db.ingredientes.put(novoIngrediente);
       setIngredientes(prev => [...prev, novoIngrediente]);
+      itensParaSalvar.push({ coll: "ingredientes", item: novoIngrediente });
 
       let quantidadeArmazenada = qtdNum;
       if (unidade === "g") quantidadeArmazenada = qtdNum / 1000;
@@ -374,10 +403,12 @@ export default function App() {
         data: new Date().toISOString()
       };
       const compraId = await db.compras.add(novaCompra);
-      setCompras(prev => [...prev, { ...novaCompra, id: compraId }]);
+      const compraComId = { ...novaCompra, id: compraId };
+      setCompras(prev => [...prev, compraComId]);
+      itensParaSalvar.push({ coll: "compras", item: compraComId });
     }
 
-    sincronizarFirebase("salvar ingrediente no Firebase");
+    await salvarItensNoFirebase(itensParaSalvar, "salvar ingrediente no Firebase");
 
     limparFormularioIngrediente();
   };
@@ -434,10 +465,14 @@ export default function App() {
       data: new Date().toISOString()
     };
     const compraId = await db.compras.add(novaCompra);
-    setCompras(prev => [...prev, { ...novaCompra, id: compraId }]);
+    const compraComId = { ...novaCompra, id: compraId };
+    setCompras(prev => [...prev, compraComId]);
     setCompraModalOpen(false);
 
-    sincronizarFirebase("salvar compra no Firebase");
+    await salvarItensNoFirebase(
+      [{ coll: "compras", item: compraComId }],
+      "salvar compra no Firebase"
+    );
   };
 
   const custoMedio = (ingredienteId) => {
@@ -512,8 +547,12 @@ export default function App() {
     };
 
     const itemId = await db.receita.add(novoItem);
-    setReceita(prev => [...prev, { ...novoItem, id: itemId }]);
-    sincronizarFirebase("salvar item da receita no Firebase");
+    const itemComId = { ...novoItem, id: itemId };
+    setReceita(prev => [...prev, itemComId]);
+    await salvarItensNoFirebase(
+      [{ coll: "receita", item: itemComId }],
+      "salvar item da receita no Firebase"
+    );
 
     return true;
   };
@@ -592,7 +631,10 @@ export default function App() {
     setReceitaSelecionadaId(receitaId);
     setNomeReceita("");
 
-    sincronizarFirebase("salvar receita no Firebase");
+    await salvarItensNoFirebase(
+      [{ coll: "receitas", item: receitaComId }],
+      "salvar receita no Firebase"
+    );
   };
 
   const salvarConfigsVendas = async () => {
@@ -601,21 +643,41 @@ export default function App() {
       setAlertOpen(true);
       return;
     }
-    await Promise.all([
-      precoBolo && db.config.put({ chave: "precoBolo", valor: parseNumero(precoBolo) }),
-      precoFatia && db.config.put({ chave: "precoFatia", valor: parseNumero(precoFatia) }),
-      fatiasPerBolo && db.config.put({ chave: "fatiasPerBolo", valor: parseNumero(fatiasPerBolo) }),
-    ]);
-    sincronizarFirebase("salvar configurações no Firebase");
+
+    const configs = [
+      precoBolo && { chave: "precoBolo", valor: parseNumero(precoBolo) },
+      precoFatia && { chave: "precoFatia", valor: parseNumero(precoFatia) },
+      fatiasPerBolo && { chave: "fatiasPerBolo", valor: parseNumero(fatiasPerBolo) },
+    ].filter(Boolean);
+
+    await Promise.all(configs.map((config) => db.config.put(config)));
+    await salvarItensNoFirebase(
+      configs.map((config) => ({ coll: "config", item: config })),
+      "salvar configurações no Firebase"
+    );
     setShowConfigVendas(false);
-    alert("Configurações de vendas salvas!");
+    setAlertMessage("Configurações de vendas salvas!");
+    setAlertOpen(true);
   };
 
-  const registrarVenda = async () => {
+  const limparFormularioVenda = () => {
+    setVendaEditandoId(null);
+    setQtdVenda("");
+    setValorVenda("");
+    setAnotacaoVenda("");
+    setDataVenda(formatarDataLocal());
+  };
+
+  const cancelarFormularioVenda = () => {
+    setShowNovaVenda(false);
+    limparFormularioVenda();
+  };
+
+  const montarDadosVenda = () => {
     if (!qtdVenda) {
       setAlertMessage("Preencha a quantidade/valor da venda.");
       setAlertOpen(true);
-      return;
+      return null;
     }
 
     let valorFinal = 0;
@@ -624,6 +686,12 @@ export default function App() {
     let origemPreco = "config";
     const qtd = parseNumero(qtdVenda);
     const valorInformado = parseNumero(valorVenda);
+
+    if (qtd <= 0) {
+      setAlertMessage("Informe uma quantidade maior que zero.");
+      setAlertOpen(true);
+      return null;
+    }
 
     if (tipoVenda === "fatias") {
       precoAplicado = valorInformado > 0 ? valorInformado : parseNumero(precoFatia);
@@ -635,7 +703,7 @@ export default function App() {
       } else {
         setAlertMessage("Configure o preço padrão da fatia ou informe o valor por fatia nesta venda.");
         setAlertOpen(true);
-        return;
+        return null;
       }
     } else {
       precoAplicado = valorInformado > 0 ? valorInformado : parseNumero(precoBolo);
@@ -647,11 +715,11 @@ export default function App() {
       } else {
         setAlertMessage("Configure o preço padrão por kg do bolo inteiro ou informe o valor por kg nesta venda.");
         setAlertOpen(true);
-        return;
+        return null;
       }
     }
 
-    const novaVenda = {
+    return {
       tipo: tipoVenda,
       quantidade: qtd,
       valor: valorFinal,
@@ -659,18 +727,50 @@ export default function App() {
       origemPreco,
       descricao,
       anotacao: anotacaoVenda || "",
-      data: new Date(`${dataVenda}T00:00:00`).toISOString()
+      data: dataInputParaISO(dataVenda),
     };
+  };
 
-    const vendaId = await db.vendas.add(novaVenda);
-    setVendas(prev => [...prev, { ...novaVenda, id: vendaId }]);
-    setQtdVenda("");
-    setValorVenda("");
-    setAnotacaoVenda("");
-    setDataVenda(new Date().toISOString().split('T')[0]);
+  const registrarVenda = async () => {
+    const dadosVenda = montarDadosVenda();
+    if (!dadosVenda) return;
+
+    if (vendaEditandoId !== null) {
+      const vendaAtualizada = { ...dadosVenda, id: vendaEditandoId };
+      await db.vendas.put(vendaAtualizada);
+      setVendas(prev => prev.map(v => String(v.id) === String(vendaEditandoId) ? vendaAtualizada : v));
+      await salvarItensNoFirebase(
+        [{ coll: "vendas", item: vendaAtualizada }],
+        "atualizar venda no Firebase"
+      );
+    } else {
+      const vendaId = await db.vendas.add(dadosVenda);
+      const vendaComId = { ...dadosVenda, id: vendaId };
+      setVendas(prev => [...prev, vendaComId]);
+      await salvarItensNoFirebase(
+        [{ coll: "vendas", item: vendaComId }],
+        "salvar venda no Firebase"
+      );
+    }
+
+    limparFormularioVenda();
     setShowNovaVenda(false);
+  };
 
-    sincronizarFirebase("salvar venda no Firebase");
+  const editarVenda = (venda) => {
+    const precoUnitarioVenda = Number(venda.precoUnitario || 0) > 0
+      ? Number(venda.precoUnitario)
+      : Number(venda.quantidade || 0) > 0
+        ? Number(venda.valor || 0) / Number(venda.quantidade)
+        : 0;
+
+    setVendaEditandoId(venda.id);
+    setTipoVenda(venda.tipo || "fatias");
+    setQtdVenda(String(venda.quantidade || ""));
+    setValorVenda(precoUnitarioVenda > 0 ? String(precoUnitarioVenda) : "");
+    setAnotacaoVenda(venda.anotacao || "");
+    setDataVenda(isoParaDataInput(venda.data));
+    setShowNovaVenda(true);
   };
 
   const removerVenda = (vendaId) => {
@@ -689,12 +789,14 @@ export default function App() {
       await db.ingredientes.delete(id);
       setIngredientes(prev => prev.filter((_, i) => i !== index));
       setCompras(prev => prev.filter(c => c.ingredienteId !== id));
-      await Promise.all([
-        removerDoFirebase("ingredientes", id, "remover ingrediente no Firebase"),
-        ...comprasDoIngrediente.map((compra) =>
-          removerDoFirebase("compras", compra.id, "remover compras do ingrediente no Firebase")
-        ),
-      ]);
+      await executarOperacaoBanco("remover ingrediente no Firebase", () =>
+        Promise.all([
+          deleteFromFirestore("ingredientes", id),
+          ...comprasDoIngrediente.map((compra) =>
+            deleteFromFirestore("compras", compra.id)
+          ),
+        ])
+      );
       if (editIndex === index) {
         setNome("");
         setUnidade("kg");
@@ -730,18 +832,18 @@ export default function App() {
       if (receitaSelecionadaRemovida) {
         setReceitaSelecionadaId(receitasRestantes[0]?.id ?? null);
       }
-      await Promise.all([
-        removerDoFirebase("receitas", receitaId, "remover receita no Firebase"),
-        ...itensDaReceita.map((item) =>
-          removerDoFirebase("receita", item.id, "remover itens da receita no Firebase")
-        ),
-      ]);
+      await executarOperacaoBanco("remover receita no Firebase", () =>
+        Promise.all([
+          deleteFromFirestore("receitas", receitaId),
+          ...itensDaReceita.map((item) =>
+            deleteFromFirestore("receita", item.id)
+          ),
+        ])
+      );
     }
     setConfirmOpen(false);
     setConfirmAction(null);
     setConfirmData(null);
-
-    sincronizarFirebase("atualizar Firebase após exclusão");
   };
 
   const receitaSelecionada = receitas.find(r => String(r.id) === String(receitaSelecionadaId)) || receitas[0] || null;
@@ -809,6 +911,8 @@ export default function App() {
       className: "bg-red-100 text-red-950 border-red-200",
     },
   }[firebaseStatus];
+  const isBusy = Boolean(operacaoAtual);
+  const firebaseStatusLabel = operacaoAtual || firebaseStatusInfo.label;
 
   return (
     <div className="min-h-screen flex flex-col bg-[#fff7fc] text-gray-900">
@@ -824,7 +928,7 @@ export default function App() {
             </div>
           </div>
           <span className={`inline-flex w-fit items-center rounded-md border px-3 py-1 text-xs font-bold ${firebaseStatusInfo.className}`}>
-            {firebaseStatusInfo.label}
+            {firebaseStatusLabel}
           </span>
         </div>
       </header>
@@ -835,9 +939,9 @@ export default function App() {
             <div className="card border border-rose-100/80 bg-white/95">
               <h2 className="font-bold text-xl mb-4 text-rose-950">📦 Ingrediente</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
-                <input className="input border-2 border-rose-200 focus:border-rose-700 placeholder-gray-400" placeholder="Nome" value={nome} onChange={e => setNome(e.target.value)} />
+                <input disabled={isBusy} className="input border-2 border-rose-200 focus:border-rose-700 placeholder-gray-400" placeholder="Nome" value={nome} onChange={e => setNome(e.target.value)} />
 
-                <select className="input border-2 border-rose-200 focus:border-rose-700 bg-white" value={unidade} onChange={e => setUnidade(e.target.value)}>
+                <select disabled={isBusy} className="input border-2 border-rose-200 focus:border-rose-700 bg-white" value={unidade} onChange={e => setUnidade(e.target.value)}>
                   <option value="kg">Kg</option>
                   <option value="un">Unidade</option>
                   <option value="pacote">Pacote</option>
@@ -846,19 +950,19 @@ export default function App() {
 
                 <div className="border-2 border-rose-200 p-3 rounded-lg bg-rose-50/80 sm:col-span-2 xl:col-span-1">
                   <div className="flex gap-2 items-center mb-2">
-                    <input id="usePrecoPorUnidade" type="checkbox" checked={usePrecoPorUnidade} onChange={e => setUsePrecoPorUnidade(e.target.checked)} className="w-4 h-4 cursor-pointer accent-rose-800" />
+                    <input disabled={isBusy} id="usePrecoPorUnidade" type="checkbox" checked={usePrecoPorUnidade} onChange={e => setUsePrecoPorUnidade(e.target.checked)} className="w-4 h-4 cursor-pointer accent-rose-800" />
                     <label htmlFor="usePrecoPorUnidade" className="text-xs font-semibold cursor-pointer flex-1 text-gray-700">{labelPrecoPorUnidade(unidade)}</label>
                   </div>
                   {usePrecoPorUnidade ? (
-                    <input type="text" className="input border-2 border-rose-200 focus:border-rose-700 mt-1 text-sm" placeholder={labelPrecoPorUnidade(unidade)} value={precoUnitario} onChange={e => setPrecoUnitario(e.target.value)} />
+                    <input disabled={isBusy} type="text" className="input border-2 border-rose-200 focus:border-rose-700 mt-1 text-sm" placeholder={labelPrecoPorUnidade(unidade)} value={precoUnitario} onChange={e => setPrecoUnitario(e.target.value)} />
                   ) : (
-                    <input type="text" className="input border-2 border-rose-200 focus:border-rose-700 mt-1 text-sm" placeholder="Valor gasto" value={precoCompra} onChange={e => setPrecoCompra(e.target.value)} />
+                    <input disabled={isBusy} type="text" className="input border-2 border-rose-200 focus:border-rose-700 mt-1 text-sm" placeholder="Valor gasto" value={precoCompra} onChange={e => setPrecoCompra(e.target.value)} />
                   )}
                 </div>
 
-                <input type="text" className="input border-2 border-rose-200 focus:border-rose-700 placeholder-gray-400" placeholder="Qtd (ex: 0.5 = 500g)" value={qtdCompra} onChange={e => setQtdCompra(e.target.value)} />
+                <input disabled={isBusy} type="text" className="input border-2 border-rose-200 focus:border-rose-700 placeholder-gray-400" placeholder="Qtd (ex: 0.5 = 500g)" value={qtdCompra} onChange={e => setQtdCompra(e.target.value)} />
 
-                <button onClick={salvarIngrediente} className="btn btn-primary w-full sm:col-span-2 xl:col-span-1">
+                <button disabled={isBusy} onClick={salvarIngrediente} className="btn btn-primary w-full sm:col-span-2 xl:col-span-1">
                   {editIndex !== null ? "✓ Atualizar" : "+ Adicionar"}
                 </button>
               </div>
@@ -884,10 +988,10 @@ export default function App() {
                           <p className="text-xs text-gray-500 mt-1 break-words">📊 Custo: R$ <span className="font-semibold text-rose-900">{displayCusto.toFixed(2)}</span> / {displayUnidade}</p>
                         </div>
                         <div className="grid grid-cols-4 gap-2 sm:flex sm:items-center sm:ml-4 shrink-0">
-                          <button onClick={() => registrarCompra(i)} className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 font-semibold text-xs rounded-md" aria-label={`Registrar compra de ${i.nome}`}>💳</button>
-                          <button onClick={() => adicionarNaReceita(i)} className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 font-semibold text-xs rounded-md" aria-label={`Usar ${i.nome} na receita`}>✅</button>
-                          <button onClick={() => editarIngrediente(idx)} className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 font-semibold text-xs rounded-md" aria-label={`Editar ${i.nome}`}>✏️</button>
-                          <button onClick={() => removerIngrediente(idx)} className="small-btn bg-red-100 text-red-700 hover:bg-red-200 font-semibold text-xs rounded-md" aria-label={`Remover ${i.nome}`}>🗑️</button>
+                          <button disabled={isBusy} onClick={() => registrarCompra(i)} className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 font-semibold text-xs rounded-md" aria-label={`Registrar compra de ${i.nome}`}>💳</button>
+                          <button disabled={isBusy} onClick={() => adicionarNaReceita(i)} className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 font-semibold text-xs rounded-md" aria-label={`Usar ${i.nome} na receita`}>✅</button>
+                          <button disabled={isBusy} onClick={() => editarIngrediente(idx)} className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 font-semibold text-xs rounded-md" aria-label={`Editar ${i.nome}`}>✏️</button>
+                          <button disabled={isBusy} onClick={() => removerIngrediente(idx)} className="small-btn bg-red-100 text-red-700 hover:bg-red-200 font-semibold text-xs rounded-md" aria-label={`Remover ${i.nome}`}>🗑️</button>
                         </div>
                       </div>
                     );
@@ -906,8 +1010,8 @@ export default function App() {
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 mb-4">
-                <input className="input border-2 border-rose-200 focus:border-rose-700" placeholder="Nome da receita" value={nomeReceita} onChange={e => setNomeReceita(e.target.value)} />
-                <button onClick={criarReceita} className="btn btn-primary">+ Receita</button>
+                <input disabled={isBusy} className="input border-2 border-rose-200 focus:border-rose-700" placeholder="Nome da receita" value={nomeReceita} onChange={e => setNomeReceita(e.target.value)} />
+                <button disabled={isBusy} onClick={criarReceita} className="btn btn-primary">+ Receita</button>
               </div>
 
               <div className="flex gap-2 overflow-x-auto pb-2 mb-4">
@@ -918,6 +1022,7 @@ export default function App() {
                     <button
                       key={`receita-${r.id}`}
                       type="button"
+                      disabled={isBusy}
                       onClick={() => setReceitaSelecionadaId(r.id)}
                       className={`small-btn shrink-0 ${selecionada ? "bg-rose-900 text-white hover:bg-rose-950" : "bg-rose-100 text-rose-900 hover:bg-rose-200"}`}
                     >
@@ -940,6 +1045,7 @@ export default function App() {
                       </span>
                       <button
                         type="button"
+                        disabled={isBusy}
                         onClick={() => removerReceita(receitaSelecionada)}
                         className="small-btn bg-red-100 text-red-700 hover:bg-red-200 font-semibold text-xs rounded-md"
                         aria-label={`Excluir receita ${receitaSelecionada.nome}`}
@@ -954,6 +1060,7 @@ export default function App() {
                       <label className="text-xs font-semibold text-gray-600 block mb-1">Ingrediente</label>
                       <select
                         className="input border-2 border-rose-200 focus:border-rose-700 bg-white"
+                        disabled={isBusy}
                         value={ingredienteReceitaId}
                         onChange={e => setIngredienteReceitaId(e.target.value)}
                       >
@@ -972,6 +1079,7 @@ export default function App() {
                       </label>
                       <input
                         type="text"
+                        disabled={isBusy}
                         className="input border-2 border-rose-200 focus:border-rose-700"
                         placeholder="Ex: 0.5"
                         value={qtdIngredienteReceita}
@@ -986,6 +1094,7 @@ export default function App() {
 
                     <button
                       type="button"
+                      disabled={isBusy}
                       onClick={adicionarIngredienteReceitaSelecionada}
                       className="btn btn-primary md:min-w-36"
                     >
@@ -1015,7 +1124,7 @@ export default function App() {
                             {custoUnitarioAtual > 0 && <span> • Base R$ {Number(custoUnitarioAtual).toFixed(2)} / {r.unidade || "un"}</span>}
                           </p>
                         </div>
-                        <button onClick={() => removerDaReceita(r.id)} className="small-btn bg-red-100 text-red-700 hover:bg-red-200 font-semibold rounded-md self-start sm:self-center lg:self-start xl:self-center" aria-label={`Remover ${r.nome} da receita`}>🗑️</button>
+                        <button disabled={isBusy} onClick={() => removerDaReceita(r.id)} className="small-btn bg-red-100 text-red-700 hover:bg-red-200 font-semibold rounded-md self-start sm:self-center lg:self-start xl:self-center" aria-label={`Remover ${r.nome} da receita`}>🗑️</button>
                       </div>
                     );
                   })}
@@ -1025,176 +1134,52 @@ export default function App() {
           </div>
 
           <aside className="lg:col-span-1 space-y-5 lg:space-y-6">
-            <div className="bg-gradient-to-br from-pink-400 via-rose-400 to orange-400 text-white rounded-lg shadow-md p-4 sm:p-5 border ">
-              <h2 className="font-bold text-xl mb-4">💰 Resumo Financeiro</h2>
-              <div className="space-y-3 text-sm font-semibold">
-                <div className="bg-white/15 rounded-lg p-3 border border-white/10">
-                  <p className="text-rose-100">Custo da receita selecionada</p>
-                  <p className="text-xs text-white/75 mt-1 break-words">{receitaSelecionada?.nome || "Nenhuma receita"}</p>
-                  <p className="text-2xl font-bold break-words">R$ {custoTotal.toFixed(2)}</p>
-                </div>
-                <div className="bg-white/15 rounded-lg p-3 border border-white/10">
-                  <p className="text-rose-100">Vendas realizadas</p>
-                  <p className="text-2xl font-bold break-words">R$ {vendaTotal.toFixed(2)}</p>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="bg-white/10 rounded-lg p-2 border border-white/10 min-w-0">
-                    <p className="text-rose-100 text-xs">Ticket médio</p>
-                    <p className="font-bold break-words">R$ {ticketMedio.toFixed(2)}</p>
-                  </div>
-                  <div className="bg-white/10 rounded-lg p-2 border border-white/10 min-w-0">
-                    <p className="text-rose-100 text-xs">Margem estimada</p>
-                    <p className="font-bold break-words">{margemLucro.toFixed(1)}%</p>
-                  </div>
-                </div>
-                <div className="bg-white/20 rounded-lg p-3 border border-white/60">
-                  <p className="text-white text-xs">LUCRO TOTAL</p>
-                  <p className="text-2xl sm:text-3xl font-bold break-words">{lucro >= 0 ? '✅' : '❌'} R$ {Math.abs(lucro).toFixed(2)}</p>
-                </div>
-              </div>
-              <div className="mt-4 pt-4 border-t border-white/30">
-                <div className="flex items-center justify-between gap-3 mb-2">
-                  <p className="font-bold text-sm">Custos por receita</p>
-                  <p className="text-xs text-white/75">Catálogo: R$ {custoCatalogoReceitas.toFixed(2)}</p>
-                </div>
-                <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
-                  {resumoReceitas.map((r) => {
-                    const selecionada = String(r.id) === String(receitaSelecionadaIdAtual);
+            <FinancialSummary
+              receitaSelecionada={receitaSelecionada}
+              custoTotal={custoTotal}
+              vendaTotal={vendaTotal}
+              ticketMedio={ticketMedio}
+              margemLucro={margemLucro}
+              lucro={lucro}
+              resumoReceitas={resumoReceitas}
+              custoCatalogoReceitas={custoCatalogoReceitas}
+              receitaSelecionadaIdAtual={receitaSelecionadaIdAtual}
+              setReceitaSelecionadaId={setReceitaSelecionadaId}
+              gastoSemana={gastoSemana}
+              ganhoSemana={ganhoSemana}
+              isBusy={isBusy}
+            />
 
-                    return (
-                      <button
-                        key={`resumo-receita-${r.id}`}
-                        type="button"
-                        onClick={() => setReceitaSelecionadaId(r.id)}
-                        className={`w-full text-left rounded-lg px-3 py-2 border transition ${selecionada ? "bg-white text-rose-950 border-white" : "bg-white/10 text-white border-white/10 hover:bg-white/20"}`}
-                      >
-                        <span className="flex items-center justify-between gap-3">
-                          <span className="font-semibold text-sm break-words">{r.nome}</span>
-                          <span className="font-bold text-sm shrink-0">R$ {r.custo.toFixed(2)}</span>
-                        </span>
-                        <span className={selecionada ? "text-xs text-gray-500" : "text-xs text-white/70"}>
-                          {r.totalItens} ingrediente(s)
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              <hr className="my-4 border-white/40" />
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div className="bg-white/10 rounded-lg p-2 text-center min-w-0 border border-white/10">
-                  <p className="text-rose-100">Gasto/Semana</p>
-                  <p className="font-bold break-words">R$ {gastoSemana.toFixed(2)}</p>
-                </div>
-                <div className="bg-white/10 rounded-lg p-2 text-center min-w-0 border border-white/10">
-                  <p className="text-rose-100">Ganho/Semana</p>
-                  <p className="font-bold break-words">R$ {ganhoSemana.toFixed(2)}</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="card border border-rose-200/80 bg-white/95">
-              <button
-                type="button"
-                onClick={() => setShowConfigVendas(prev => !prev)}
-                className="w-full flex items-center justify-between gap-3 text-left"
-                aria-expanded={showConfigVendas}
-              >
-                <span>
-                  <span className="block font-bold text-lg text-rose-950">⚙️ Configurar Vendas</span>
-                  <span className="block text-xs text-gray-500 mt-1">Preços e fatias ficam guardados para os próximos registros.</span>
-                </span>
-                <span className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 shrink-0">
-                  {showConfigVendas ? "▲" : "▼"}
-                </span>
-              </button>
-
-              {showConfigVendas && (
-                <div className="pt-4 mt-4 border-t border-rose-100">
-                  <div className="space-y-3 mb-4">
-                    <div>
-                      <label className="text-xs font-semibold text-gray-600 block mb-1">Preço por kg (bolo inteiro)</label>
-                      <input type="text" className="input border-2 border-rose-200 focus:border-rose-700" placeholder="R$ ex: 45.00" value={precoBolo} onChange={e => setPrecoBolo(e.target.value)} />
-                    </div>
-                    <div>
-                      <label className="text-xs font-semibold text-gray-600 block mb-1">Preço por fatia</label>
-                      <input type="text" className="input border-2 border-rose-200 focus:border-rose-700" placeholder="R$ ex: 8.50" value={precoFatia} onChange={e => setPrecoFatia(e.target.value)} />
-                    </div>
-                    <div>
-                      <label className="text-xs font-semibold text-gray-600 block mb-1">Fatias por bolo</label>
-                      <input type="text" className="input border-2 border-rose-200 focus:border-rose-700" placeholder="ex: 12" value={fatiasPerBolo} onChange={e => setFatiasPerBolo(e.target.value)} />
-                    </div>
-                  </div>
-                  <button onClick={salvarConfigsVendas} className="btn btn-primary w-full">💾 Salvar Configuração</button>
-                </div>
-              )}
-            </div>
-
-            {showNovaVenda ? (
-              <div className="card bg-rose-50/90 border border-rose-200/80">
-                <h3 className="font-bold text-lg mb-4 text-rose-950">🛍️ Registrar Venda</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-                  <label className="flex items-center gap-2 cursor-pointer p-3 bg-white rounded-lg border-2 border-rose-200 hover:border-rose-500 transition">
-                    <input type="radio" value="fatias" checked={tipoVenda === "fatias"} onChange={e => { setTipoVenda(e.target.value); setValorVenda(""); }} name="tipoVenda" className="accent-rose-800" />
-                    <span className="text-sm font-semibold text-gray-700">🍰 Fatias</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer p-3 bg-white rounded-lg border-2 border-rose-200 hover:border-rose-500 transition">
-                    <input type="radio" value="bolo" checked={tipoVenda === "bolo"} onChange={e => { setTipoVenda(e.target.value); setValorVenda(""); }} name="tipoVenda" className="accent-rose-800" />
-                    <span className="text-sm font-semibold text-gray-700">🎂 Bolo Inteiro</span>
-                  </label>
-                </div>
-
-                <div className="space-y-3">
-                  <input type="text" className="input border-2 border-rose-200 focus:border-rose-700" placeholder={tipoVenda === "bolo" ? "Quantidade (kg, ex: 2.5)" : "Quantidade (ex: 3)"} value={qtdVenda} onChange={e => setQtdVenda(e.target.value)} />
-                  <div>
-                    <label htmlFor="valorVendaManual" className="text-xs font-semibold text-gray-600 block mb-1">
-                      {tipoVenda === "bolo" ? "Valor por kg nesta venda" : "Valor por fatia nesta venda"}
-                    </label>
-                    <input
-                      id="valorVendaManual"
-                      type="text"
-                      className="input border-2 border-rose-200 focus:border-rose-700"
-                      placeholder={tipoVenda === "bolo" ? `Opcional - padrão R$ ${parseNumero(precoBolo).toFixed(2)} / kg` : `Opcional - padrão R$ ${parseNumero(precoFatia).toFixed(2)} / fatia`}
-                      value={valorVenda}
-                      onChange={e => setValorVenda(e.target.value)}
-                    />
-                  </div>
-                  <input type="date" className="input border-2 border-rose-200 focus:border-rose-700" value={dataVenda} onChange={e => setDataVenda(e.target.value)} />
-                  <textarea className="input border-2 border-rose-200 focus:border-rose-700 resize-none" placeholder="Anotação (ex: Cliente: Maria, Entrega 14h)" value={anotacaoVenda} onChange={e => setAnotacaoVenda(e.target.value)} rows="3" />
-                </div>
-                <div className="flex flex-col sm:flex-row gap-3 mt-4">
-                  <button onClick={registrarVenda} className="btn btn-primary flex-1">✅ Registrar</button>
-                  <button onClick={() => { setShowNovaVenda(false); setQtdVenda(""); setValorVenda(""); setAnotacaoVenda(""); setDataVenda(new Date().toISOString().split('T')[0]); }} className="btn flex-1 bg-gray-200 text-gray-700 hover:bg-gray-300">❌ Cancelar</button>
-                </div>
-              </div>
-            ) : (
-              <button onClick={() => setShowNovaVenda(true)} className="btn btn-primary w-full shadow-md">+ Nova Venda</button>
-            )}
-
-            <div className="card border border-rose-200/80 bg-white/95">
-              <h3 className="font-bold text-lg mb-4 text-rose-950">📋 Vendas Realizadas</h3>
-              {vendas.length === 0 ? (
-                <p className="text-sm text-gray-400 text-center py-8">Nenhuma venda registrada</p>
-              ) : (
-                <div className="space-y-3">
-                  {vendas.map((v) => (
-                    <div key={`vend-${v.id}`} className="border-b border-rose-100 pb-4 last:border-b-0 hover:bg-rose-50 p-3 rounded-lg transition">
-                      <div className="flex flex-col sm:flex-row lg:flex-col xl:flex-row justify-between gap-3 items-stretch sm:items-start">
-                        <div className="flex-1 text-sm min-w-0">
-                          <p className="font-bold text-gray-800 break-words">{v.descricao}</p>
-                          {v.anotacao && <p className="text-xs text-gray-600 mt-1 bg-rose-50 p-2 rounded border-l-2 border-rose-300 break-words">📝 {v.anotacao}</p>}
-                          <p className="text-xs text-gray-500 mt-2">📅 {new Date(v.data).toLocaleDateString('pt-BR')}</p>
-                        </div>
-                        <div className="flex items-center justify-between sm:justify-end lg:justify-between xl:justify-end gap-3 shrink-0">
-                          <p className="font-bold text-lg text-emerald-700 break-words">R$ {v.valor.toFixed(2)}</p>
-                          <button onClick={() => removerVenda(v.id)} className="small-btn bg-red-100 text-red-700 hover:bg-red-200 font-semibold rounded-md" aria-label="Remover venda">🗑️</button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <SalesPanel
+              showConfigVendas={showConfigVendas}
+              setShowConfigVendas={setShowConfigVendas}
+              precoBolo={precoBolo}
+              setPrecoBolo={setPrecoBolo}
+              precoFatia={precoFatia}
+              setPrecoFatia={setPrecoFatia}
+              fatiasPerBolo={fatiasPerBolo}
+              setFatiasPerBolo={setFatiasPerBolo}
+              onSalvarConfigsVendas={salvarConfigsVendas}
+              showNovaVenda={showNovaVenda}
+              setShowNovaVenda={setShowNovaVenda}
+              tipoVenda={tipoVenda}
+              setTipoVenda={setTipoVenda}
+              qtdVenda={qtdVenda}
+              setQtdVenda={setQtdVenda}
+              valorVenda={valorVenda}
+              setValorVenda={setValorVenda}
+              anotacaoVenda={anotacaoVenda}
+              setAnotacaoVenda={setAnotacaoVenda}
+              dataVenda={dataVenda}
+              setDataVenda={setDataVenda}
+              vendaEditandoId={vendaEditandoId}
+              onSubmitVenda={registrarVenda}
+              onCancelVenda={cancelarFormularioVenda}
+              vendas={vendas}
+              onEditarVenda={editarVenda}
+              onRemoverVenda={removerVenda}
+              isBusy={isBusy}
+            />
 
           </aside>
         </div>
@@ -1208,19 +1193,19 @@ export default function App() {
           )}
           <div>
             <label className="text-sm font-bold text-gray-700 block mb-2">{labelPrecoPorUnidade(compraModalIngrediente?.unidade)} (opcional)</label>
-            <input className="input border-2 border-rose-200 focus:border-rose-700" value={compraModalPrecoUnit} onChange={e => setCompraModalPrecoUnit(e.target.value)} placeholder={`R$ / ${compraModalIngrediente?.unidade === 'kg' || compraModalIngrediente?.unidade === 'g' ? 'kg' : compraModalIngrediente?.unidade || 'unidade'}`} />
+            <input disabled={isBusy} className="input border-2 border-rose-200 focus:border-rose-700" value={compraModalPrecoUnit} onChange={e => setCompraModalPrecoUnit(e.target.value)} placeholder={`R$ / ${compraModalIngrediente?.unidade === 'kg' || compraModalIngrediente?.unidade === 'g' ? 'kg' : compraModalIngrediente?.unidade || 'unidade'}`} />
           </div>
           <div>
             <label className="text-sm font-bold text-gray-700 block mb-2">Quantidade ({compraModalIngrediente?.unidade || ''})</label>
-            <input className="input border-2 border-rose-200 focus:border-rose-700" value={compraModalQtd} onChange={e => setCompraModalQtd(e.target.value)} placeholder={compraModalIngrediente?.unidade === 'g' ? 'ex: 0.5 = 500g' : ''} />
+            <input disabled={isBusy} className="input border-2 border-rose-200 focus:border-rose-700" value={compraModalQtd} onChange={e => setCompraModalQtd(e.target.value)} placeholder={compraModalIngrediente?.unidade === 'g' ? 'ex: 0.5 = 500g' : ''} />
           </div>
           <div>
             <label className="text-sm font-bold text-gray-700 block mb-2">Valor total (opcional)</label>
-            <input className="input border-2 border-rose-200 focus:border-rose-700" value={compraModalPrecoTotal} onChange={e => setCompraModalPrecoTotal(e.target.value)} placeholder="Valor total pago" />
+            <input disabled={isBusy} className="input border-2 border-rose-200 focus:border-rose-700" value={compraModalPrecoTotal} onChange={e => setCompraModalPrecoTotal(e.target.value)} placeholder="Valor total pago" />
           </div>
           <div className="flex flex-col sm:flex-row gap-3 sm:justify-end pt-4 border-t border-gray-200">
-            <button className="btn bg-gray-200 text-gray-700 hover:bg-gray-300" onClick={() => setCompraModalOpen(false)}>Cancelar</button>
-            <button className="btn btn-primary" onClick={registrarCompraExec}>✅ Salvar compra</button>
+            <button disabled={isBusy} className="btn bg-gray-200 text-gray-700 hover:bg-gray-300" onClick={() => setCompraModalOpen(false)}>Cancelar</button>
+            <button disabled={isBusy} className="btn btn-primary" onClick={registrarCompraExec}>✅ Salvar compra</button>
           </div>
         </div>
       </Modal>
@@ -1229,11 +1214,11 @@ export default function App() {
         <div className="space-y-4">
           <div>
             <label className="text-sm font-bold text-gray-700 block mb-2">Quantidade ({usarModalIngrediente?.unidade || ''})</label>
-            <input className="input border-2 border-rose-200 focus:border-rose-700" value={usarModalQtd} onChange={e => setUsarModalQtd(e.target.value)} placeholder={usarModalIngrediente?.unidade === 'g' ? 'ex: 0.5 = 500g' : ''} />
+            <input disabled={isBusy} className="input border-2 border-rose-200 focus:border-rose-700" value={usarModalQtd} onChange={e => setUsarModalQtd(e.target.value)} placeholder={usarModalIngrediente?.unidade === 'g' ? 'ex: 0.5 = 500g' : ''} />
           </div>
           <div className="flex flex-col sm:flex-row gap-3 sm:justify-end pt-4 border-t border-gray-200">
-            <button className="btn bg-gray-200 text-gray-700 hover:bg-gray-300" onClick={() => setUsarModalOpen(false)}>Cancelar</button>
-            <button className="btn btn-primary" onClick={adicionarNaReceitaExec}>✅ Adicionar</button>
+            <button disabled={isBusy} className="btn bg-gray-200 text-gray-700 hover:bg-gray-300" onClick={() => setUsarModalOpen(false)}>Cancelar</button>
+            <button disabled={isBusy} className="btn btn-primary" onClick={adicionarNaReceitaExec}>✅ Adicionar</button>
           </div>
         </div>
       </Modal>
@@ -1242,8 +1227,8 @@ export default function App() {
         <div className="space-y-4">
           <p className="text-gray-700 font-medium text-lg">{confirmMessage}</p>
           <div className="flex flex-col sm:flex-row gap-3 sm:justify-end pt-4 border-t border-gray-200">
-            <button className="btn bg-gray-200 text-gray-700 hover:bg-gray-300" onClick={() => setConfirmOpen(false)}>Não</button>
-            <button className="btn bg-red-500 text-white hover:bg-red-600" onClick={handleConfirmYes}>Sim, excluir</button>
+            <button disabled={isBusy} className="btn bg-gray-200 text-gray-700 hover:bg-gray-300" onClick={() => setConfirmOpen(false)}>Não</button>
+            <button disabled={isBusy} className="btn bg-red-500 text-white hover:bg-red-600" onClick={handleConfirmYes}>Sim, excluir</button>
           </div>
         </div>
       </Modal>
