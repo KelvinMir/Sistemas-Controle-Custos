@@ -14,7 +14,7 @@ export default function FinancialSummary({
   isBusy,
 }) {
   return (
-    <div className="bg-gradient-to-br from-pink-400 via-rose-400 to-orange-400 text-white rounded-lg shadow-md p-4 sm:p-5 border ">
+    <div className="summary-panel text-white rounded-lg shadow-md p-4 sm:p-5 border ">
       <h2 className="font-bold text-xl mb-4">💰 Resumo Financeiro</h2>
       <div className="space-y-3 text-sm font-semibold">
         <div className="bg-white/15 rounded-lg p-3 border border-white/10">
