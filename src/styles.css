@@ -287,6 +287,249 @@ select.input {
   cursor: pointer;
 }
 
+.ingredient-entry-card {
+  overflow: visible;
+}
+
+.ingredient-entry-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.ingredient-entry-card__header span {
+  display: inline-flex;
+  min-height: 1.8rem;
+  align-items: center;
+  padding: 0.25rem 0.55rem;
+  border: 1px solid rgba(143, 29, 69, 0.12);
+  border-radius: 0.45rem;
+  color: var(--rose-dark);
+  background: #fff7fb;
+  font-size: 0.74rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.ingredient-form {
+  --ingredient-control-height: 2.875rem;
+
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.9rem;
+  align-items: end;
+}
+
+.ingredient-form__field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.ingredient-form__field > span {
+  color: #6b5a66;
+  font-size: 0.73rem;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.ingredient-form__submit {
+  width: 100%;
+  min-height: var(--ingredient-control-height);
+  height: var(--ingredient-control-height);
+  align-self: end;
+  white-space: nowrap;
+}
+
+.ingredient-form .input,
+.ingredient-form .pretty-select__button {
+  min-height: var(--ingredient-control-height);
+  height: var(--ingredient-control-height);
+}
+
+.ingredient-form .pretty-select__description {
+  display: none;
+}
+
+.price-mode-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.price-mode-field__control {
+  position: relative;
+  min-width: 0;
+}
+
+.price-mode-field__input {
+  min-height: var(--ingredient-control-height);
+  height: var(--ingredient-control-height);
+  padding-right: 7rem;
+}
+
+.price-mode-option {
+  position: absolute;
+  top: 50%;
+  right: 0.38rem;
+  transform: translateY(-50%);
+  display: flex;
+  max-width: 6.25rem;
+  min-height: 2.05rem;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.25rem 0.45rem;
+  border: 1px solid rgba(143, 29, 69, 0.12);
+  border-radius: 0.4rem;
+  color: var(--ink);
+  background: rgba(255, 247, 251, 0.92);
+  box-shadow: 0 8px 18px -16px rgba(37, 25, 35, 0.6);
+  cursor: pointer;
+  transition:
+    background-color 170ms var(--ease),
+    border-color 170ms var(--ease),
+    box-shadow 170ms var(--ease),
+    transform 170ms var(--ease);
+}
+
+.price-mode-option:hover {
+  border-color: rgba(168, 85, 247, 0.24);
+  background: #ffffff;
+  transform: translateY(-50%) translateX(-1px);
+}
+
+.price-mode-option.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.price-mode-option__control {
+  position: relative;
+  flex: 0 0 auto;
+  width: 1.95rem;
+  height: 1.08rem;
+}
+
+.price-mode-option__input {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+
+.price-mode-option__track {
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgba(143, 29, 69, 0.2);
+  border-radius: 999px;
+  background: #eadde6;
+  box-shadow: inset 0 1px 2px rgba(37, 25, 35, 0.08);
+  transition:
+    background 170ms var(--ease),
+    border-color 170ms var(--ease),
+    box-shadow 170ms var(--ease);
+}
+
+.price-mode-option__track::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0.16rem;
+  width: 0.72rem;
+  height: 0.72rem;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 2px 6px rgba(37, 25, 35, 0.22);
+  transform: translateY(-50%);
+  transition: left 170ms var(--ease);
+}
+
+.price-mode-option__input:checked + .price-mode-option__track {
+  border-color: rgba(255, 255, 255, 0.3);
+  background: linear-gradient(135deg, var(--pink) 0%, var(--purple) 58%, var(--blue) 100%);
+}
+
+.price-mode-option__input:checked + .price-mode-option__track::after {
+  left: calc(100% - 0.16rem - 0.72rem);
+}
+
+.price-mode-option__input:focus-visible + .price-mode-option__track {
+  box-shadow: var(--shadow-focus);
+}
+
+.price-mode-option__copy {
+  display: flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: 0.05rem;
+}
+
+.price-mode-option__copy span {
+  overflow: hidden;
+  color: #4c3b46;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.price-mode-option__copy small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 650;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (min-width: 640px) {
+  .ingredient-form {
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  }
+
+  .ingredient-form__field--price,
+  .ingredient-form__submit {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (min-width: 1280px) {
+  .ingredient-form {
+    grid-template-columns:
+      minmax(8rem, 1.2fr)
+      minmax(6.5rem, 0.8fr)
+      minmax(13.5rem, 1.55fr)
+      minmax(7rem, 0.85fr)
+      minmax(7rem, 0.85fr);
+  }
+
+  .ingredient-form__field--name,
+  .ingredient-form__field--unit {
+    grid-column: auto;
+  }
+
+  .ingredient-form__field--price,
+  .ingredient-form__field--quantity,
+  .ingredient-form__submit {
+    grid-column: auto;
+  }
+
+  .ingredient-form__submit {
+    align-self: end;
+  }
+}
+
 .page-tabs {
   display: inline-flex;
   max-width: 100%;

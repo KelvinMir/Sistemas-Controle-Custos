@@ -33,7 +33,7 @@ export default function App() {
   const [unidade, setUnidade] = useState("kg");
   const [precoCompra, setPrecoCompra] = useState("");
   const [qtdCompra, setQtdCompra] = useState("");
-  const [editIndex, setEditIndex] = useState(null);
+  const [ingredienteEditandoId, setIngredienteEditandoId] = useState(null);
 
   const [precoUnitario, setPrecoUnitario] = useState("");
   const [usePrecoPorUnidade, setUsePrecoPorUnidade] = useState(false);
@@ -53,7 +53,7 @@ export default function App() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmMessage, setConfirmMessage] = useState("");
   const [confirmAction, setConfirmAction] = useState(null); // "delete-ingredient", "delete-sale" ou "delete-recipe"
-  const [confirmData, setConfirmData] = useState(null); // dados para a ação (ex: { index } ou { vendaId })
+  const [confirmData, setConfirmData] = useState(null); // dados para a ação (ex: { ingredienteId } ou { vendaId })
 
   const [alertOpen, setAlertOpen] = useState(false);
   const [alertMessage, setAlertMessage] = useState("");
@@ -271,6 +271,13 @@ export default function App() {
     return "Preço por unidade";
   };
 
+  const labelTogglePreco = (unidadeIngrediente) => {
+    if (unidadeIngrediente === "kg" || unidadeIngrediente === "g") return "Por kg";
+    if (unidadeIngrediente === "litro") return "Por litro";
+    if (unidadeIngrediente === "pacote") return "Por pacote";
+    return "Por un.";
+  };
+
   const mostrarErroFirebase = (error, acao) => {
     console.error(`Erro ao ${acao}:`, error);
     setFirebaseStatus("error");
@@ -323,9 +330,20 @@ export default function App() {
     const precoNum = parseNumero(precoCompra);
     const precoUnitNum = parseNumero(precoUnitario);
     const qtdNum = parseNumero(qtdCompra);
-    const ingredienteEditado = editIndex !== null ? ingredientes[editIndex] : null;
-    const ingredienteExistente = encontrarIngredientePorNome(nomeLimpo, ingredienteEditado?.id ?? null);
+    const ingredienteEditado = ingredienteEditandoId !== null
+      ? ingredientes.find((item) => String(item.id) === String(ingredienteEditandoId))
+      : null;
     const itensParaSalvar = [];
+
+    if (ingredienteEditandoId !== null && !ingredienteEditado) {
+      setAlertMessage("Não encontrei o ingrediente em edição. Selecione novamente.");
+      setAlertOpen(true);
+      limparFormularioIngrediente();
+      setIngredienteEditandoId(null);
+      return;
+    }
+
+    const ingredienteExistente = encontrarIngredientePorNome(nomeLimpo, ingredienteEditado?.id ?? null);
 
     if (ingredienteExistente) {
       abrirModalCompra(ingredienteExistente, {
@@ -335,14 +353,16 @@ export default function App() {
         aviso: "Esse ingrediente já existe. Registre uma nova compra nele para atualizar o custo médio.",
       });
       limparFormularioIngrediente();
-      setEditIndex(null);
+      setIngredienteEditandoId(null);
       return;
     }
 
-    if (editIndex !== null) {
-      const ing = ingredientes[editIndex];
+    if (ingredienteEditado) {
+      const ing = ingredienteEditado;
       const ingredienteAtualizado = { ...ing, nome: nomeLimpo, unidade };
-      setIngredientes(prev => prev.map((item, i) => i === editIndex ? ingredienteAtualizado : item));
+      setIngredientes(prev => prev.map((item) =>
+        String(item.id) === String(ing.id) ? ingredienteAtualizado : item
+      ));
       itensParaSalvar.push({ coll: "ingredientes", item: ingredienteAtualizado });
 
       const precoFinalEdit = usePrecoPorUnidade && precoUnitNum > 0 ? precoUnitNum * qtdNum : precoNum;
@@ -361,7 +381,7 @@ export default function App() {
         setCompras(prev => [...prev, compraComId]);
         itensParaSalvar.push({ coll: "compras", item: compraComId });
       }
-      setEditIndex(null);
+      setIngredienteEditandoId(null);
     } else {
 
       const precoFinal = usePrecoPorUnidade && precoUnitNum > 0 ? precoUnitNum * qtdNum : precoNum;
@@ -399,15 +419,16 @@ export default function App() {
     limparFormularioIngrediente();
   };
 
-  const editarIngrediente = (index) => {
-    setNome(ingredientes[index].nome);
-    setUnidade(ingredientes[index].unidade);
-    setEditIndex(index);
+  const editarIngrediente = (ingrediente) => {
+    setNome(ingrediente.nome);
+    setUnidade(ingrediente.unidade);
+    setIngredienteEditandoId(ingrediente.id);
   };
-  const removerIngrediente = (index) => {
-    setConfirmMessage(`Tem certeza que deseja excluir o ingrediente "${ingredientes[index].nome}"?`);
+
+  const removerIngrediente = (ingrediente) => {
+    setConfirmMessage(`Tem certeza que deseja excluir o ingrediente "${ingrediente.nome}"?`);
     setConfirmAction("delete-ingredient");
-    setConfirmData({ index });
+    setConfirmData({ ingredienteId: ingrediente.id });
     setTimeout(() => setConfirmOpen(true), 0);
   };
 
@@ -576,10 +597,13 @@ export default function App() {
   };
 
   const removerDaReceita = async (itemId) => {
-    await executarOperacaoBanco("remover item da receita no Firebase", () =>
+    const removeu = await executarOperacaoBanco("remover item da receita no Firebase", () =>
       deleteFromFirestore("receita", itemId)
     );
-    setReceita(prev => prev.filter(r => r.id !== itemId));
+
+    if (removeu) {
+      setReceita(prev => prev.filter(r => String(r.id) !== String(itemId)));
+    }
   };
 
   const removerReceita = (receitaParaRemover) => {
@@ -764,36 +788,55 @@ export default function App() {
     setTimeout(() => setConfirmOpen(true), 0);
   };
 
+  const fecharConfirmacao = () => {
+    setConfirmOpen(false);
+    setConfirmAction(null);
+    setConfirmData(null);
+  };
+
   const handleConfirmYes = async () => {
     if (confirmAction === "delete-ingredient" && confirmData) {
-      const { index } = confirmData;
-      const id = ingredientes[index].id;
-      const comprasDoIngrediente = compras.filter(c => String(c.ingredienteId) === String(id));
-      await executarOperacaoBanco("remover ingrediente no Firebase", () =>
+      const { ingredienteId } = confirmData;
+      const ingredienteRemovido = ingredientes.find((item) => String(item.id) === String(ingredienteId));
+
+      if (!ingredienteRemovido) {
+        fecharConfirmacao();
+        return;
+      }
+
+      const comprasDoIngrediente = compras.filter(c => String(c.ingredienteId) === String(ingredienteId));
+      const removeu = await executarOperacaoBanco("remover ingrediente no Firebase", () =>
         Promise.all([
-          deleteFromFirestore("ingredientes", id),
+          deleteFromFirestore("ingredientes", ingredienteId),
           ...comprasDoIngrediente.map((compra) =>
             deleteFromFirestore("compras", compra.id)
           ),
         ])
       );
-      setIngredientes(prev => prev.filter((_, i) => i !== index));
-      setCompras(prev => prev.filter(c => String(c.ingredienteId) !== String(id)));
-      if (editIndex === index) {
-        setNome("");
-        setUnidade("kg");
-        setPrecoCompra("");
-        setPrecoUnitario("");
-        setUsePrecoPorUnidade(false);
-        setQtdCompra("");
-        setEditIndex(null);
+
+      if (!removeu) {
+        fecharConfirmacao();
+        return;
+      }
+
+      setIngredientes(prev => prev.filter(item => String(item.id) !== String(ingredienteId)));
+      setCompras(prev => prev.filter(c => String(c.ingredienteId) !== String(ingredienteId)));
+      if (String(ingredienteEditandoId) === String(ingredienteId)) {
+        limparFormularioIngrediente();
+        setIngredienteEditandoId(null);
       }
     } else if (confirmAction === "delete-sale" && confirmData) {
       const { vendaId } = confirmData;
-      await executarOperacaoBanco("remover venda no Firebase", () =>
+      const removeu = await executarOperacaoBanco("remover venda no Firebase", () =>
         deleteFromFirestore("vendas", vendaId)
       );
-      setVendas(prev => prev.filter(v => v.id !== vendaId));
+
+      if (!removeu) {
+        fecharConfirmacao();
+        return;
+      }
+
+      setVendas(prev => prev.filter(v => String(v.id) !== String(vendaId)));
     } else if (confirmAction === "delete-recipe" && confirmData) {
       const { receitaId } = confirmData;
       const receitaIdComparacao = String(receitaId);
@@ -801,10 +844,10 @@ export default function App() {
       const itensDaReceita = receita.filter(item =>
         String(item.receitaId ?? receitaPadraoId) === receitaIdComparacao
       );
-      const idsItens = itensDaReceita.map(item => item.id);
+      const idsItens = new Set(itensDaReceita.map(item => String(item.id)));
       const receitasRestantes = receitas.filter(r => String(r.id) !== receitaIdComparacao);
       const receitaSelecionadaRemovida = String(receitaSelecionadaIdAtual) === receitaIdComparacao;
-      await executarOperacaoBanco("remover receita no Firebase", () =>
+      const removeu = await executarOperacaoBanco("remover receita no Firebase", () =>
         Promise.all([
           deleteFromFirestore("receitas", receitaId),
           ...itensDaReceita.map((item) =>
@@ -813,15 +856,18 @@ export default function App() {
         ])
       );
 
+      if (!removeu) {
+        fecharConfirmacao();
+        return;
+      }
+
       setReceitas(receitasRestantes);
-      setReceita(prev => prev.filter(item => !idsItens.includes(item.id)));
+      setReceita(prev => prev.filter(item => !idsItens.has(String(item.id))));
       if (receitaSelecionadaRemovida) {
         setReceitaSelecionadaId(receitasRestantes[0]?.id ?? null);
       }
     }
-    setConfirmOpen(false);
-    setConfirmAction(null);
-    setConfirmData(null);
+    fecharConfirmacao();
   };
 
   const receitaSelecionada = receitas.find(r => String(r.id) === String(receitaSelecionadaId)) || receitas[0] || null;
@@ -875,36 +921,13 @@ export default function App() {
 
   const gastoSemana = compras
     .filter(c => new Date(c.data) >= inicioSemana)
-    .reduce((acc, c) => acc + c.preco, 0);
+    .reduce((acc, c) => acc + parseNumero(c.preco), 0);
 
   const ganhoSemana = vendas
     .filter(v => new Date(v.data) >= inicioSemana)
-    .reduce((acc, v) => acc + v.valor, 0);
+    .reduce((acc, v) => acc + parseNumero(v.valor), 0);
 
-  const firebaseStatusInfo = {
-    idle: {
-      label: "Firebase pronto",
-      className: "bg-white/15 text-white border-white/20",
-    },
-    syncing: {
-      label: "Salvando no Firebase...",
-      className: "bg-yellow-100 text-yellow-950 border-yellow-200",
-    },
-    pending: {
-      label: "Firebase pendente",
-      className: "bg-orange-100 text-orange-950 border-orange-200",
-    },
-    synced: {
-      label: "Firebase salvo",
-      className: "bg-emerald-100 text-emerald-950 border-emerald-200",
-    },
-    error: {
-      label: "Erro no Firebase",
-      className: "bg-red-100 text-red-950 border-red-200",
-    },
-  }[firebaseStatus];
   const isBusy = Boolean(operacaoAtual);
-  const firebaseStatusLabel = operacaoAtual || firebaseStatusInfo.label;
 
   return (
     <div className="app-shell min-h-screen flex flex-col text-gray-900">
@@ -919,9 +942,7 @@ export default function App() {
               <p className="text-white/85 text-sm m-0">Controle dos custos e receitas para suas encomendas</p>
             </div>
           </div>
-          <span className={`sync-status inline-flex w-fit items-center rounded-md border px-3 py-1 text-xs font-bold ${firebaseStatusInfo.className}`}>
-            {firebaseStatusLabel}
-          </span>
+
         </div>
       </header>
 
@@ -950,36 +971,94 @@ export default function App() {
         {paginaAtiva === "controle" ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 lg:gap-6 items-start">
           <div className="lg:col-span-2 space-y-5 lg:space-y-6">
-            <div className="card border border-rose-100/80 bg-white/95">
-              <h2 className="font-bold text-xl mb-4 text-rose-950">📦 Ingrediente</h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
-                <input disabled={isBusy} className="input border-2 border-rose-200 focus:border-rose-700 placeholder-gray-400" placeholder="Nome" value={nome} onChange={e => setNome(e.target.value)} />
+            <div className="card ingredient-entry-card border border-rose-100/80 bg-white/95">
+              <div className="ingredient-entry-card__header">
+                <h2 className="font-bold text-xl text-rose-950">📦 Ingrediente</h2>
+                <span>{ingredienteEditandoId !== null ? "Editando" : "Novo cadastro"}</span>
+              </div>
+              <div className="ingredient-form">
+                <label className="ingredient-form__field ingredient-form__field--name">
+                  <span>Nome</span>
+                  <input
+                    disabled={isBusy}
+                    className="input border-2 border-rose-200 focus:border-rose-700 placeholder-gray-400"
+                    placeholder="Nome"
+                    value={nome}
+                    onChange={e => setNome(e.target.value)}
+                  />
+                </label>
 
-                <PrettySelect
-                  value={unidade}
-                  onChange={setUnidade}
-                  options={unidadeOptions}
-                  ariaLabel="Unidade do ingrediente"
-                  disabled={isBusy}
-                  buttonClassName="border-2 border-rose-200 focus:border-rose-700"
-                />
-
-                <div className="border-2 border-rose-200 p-3 rounded-lg bg-rose-50/80 sm:col-span-2 xl:col-span-1">
-                  <div className="flex gap-2 items-center mb-2">
-                    <input disabled={isBusy} id="usePrecoPorUnidade" type="checkbox" checked={usePrecoPorUnidade} onChange={e => setUsePrecoPorUnidade(e.target.checked)} className="w-4 h-4 cursor-pointer accent-rose-800" />
-                    <label htmlFor="usePrecoPorUnidade" className="text-xs font-semibold cursor-pointer flex-1 text-gray-700">{labelPrecoPorUnidade(unidade)}</label>
-                  </div>
-                  {usePrecoPorUnidade ? (
-                    <input disabled={isBusy} type="text" className="input border-2 border-rose-200 focus:border-rose-700 mt-1 text-sm" placeholder={labelPrecoPorUnidade(unidade)} value={precoUnitario} onChange={e => setPrecoUnitario(e.target.value)} />
-                  ) : (
-                    <input disabled={isBusy} type="text" className="input border-2 border-rose-200 focus:border-rose-700 mt-1 text-sm" placeholder="Valor gasto" value={precoCompra} onChange={e => setPrecoCompra(e.target.value)} />
-                  )}
+                <div className="ingredient-form__field ingredient-form__field--unit">
+                  <span>Unidade</span>
+                  <PrettySelect
+                    value={unidade}
+                    onChange={setUnidade}
+                    options={unidadeOptions}
+                    ariaLabel="Unidade do ingrediente"
+                    disabled={isBusy}
+                    buttonClassName="border-2 border-rose-200 focus:border-rose-700"
+                  />
                 </div>
 
-                <input disabled={isBusy} type="text" className="input border-2 border-rose-200 focus:border-rose-700 placeholder-gray-400" placeholder="Qtd (ex: 0.5 = 500g)" value={qtdCompra} onChange={e => setQtdCompra(e.target.value)} />
+                <div className="ingredient-form__field ingredient-form__field--price price-mode-field">
+                  <span>{usePrecoPorUnidade ? labelPrecoPorUnidade(unidade) : "Valor gasto"}</span>
+                  <div className="price-mode-field__control">
+                    {usePrecoPorUnidade ? (
+                      <input
+                        disabled={isBusy}
+                        type="text"
+                        className="input price-mode-field__input border-2 border-rose-200 focus:border-rose-700 text-sm"
+                        placeholder="R$ 0,00"
+                        value={precoUnitario}
+                        onChange={e => setPrecoUnitario(e.target.value)}
+                      />
+                    ) : (
+                      <input
+                        disabled={isBusy}
+                        type="text"
+                        className="input price-mode-field__input border-2 border-rose-200 focus:border-rose-700 text-sm"
+                        placeholder="R$ 0,00"
+                        value={precoCompra}
+                        onChange={e => setPrecoCompra(e.target.value)}
+                      />
+                    )}
+                    <label
+                      htmlFor="usePrecoPorUnidade"
+                      className={`price-mode-option ${isBusy ? "is-disabled" : ""}`}
+                      title={labelPrecoPorUnidade(unidade)}
+                    >
+                      <span className="price-mode-option__control">
+                        <input
+                          disabled={isBusy}
+                          id="usePrecoPorUnidade"
+                          type="checkbox"
+                          checked={usePrecoPorUnidade}
+                          onChange={e => setUsePrecoPorUnidade(e.target.checked)}
+                          className="price-mode-option__input"
+                        />
+                        <span className="price-mode-option__track" aria-hidden="true" />
+                      </span>
+                      <span className="price-mode-option__copy">
+                        <span>{labelTogglePreco(unidade)}</span>
+                      </span>
+                    </label>
+                  </div>
+                </div>
 
-                <button disabled={isBusy} onClick={salvarIngrediente} className="btn btn-primary w-full sm:col-span-2 xl:col-span-1">
-                  {editIndex !== null ? "✓ Atualizar" : "+ Adicionar"}
+                <label className="ingredient-form__field ingredient-form__field--quantity">
+                  <span>Quantidade</span>
+                  <input
+                    disabled={isBusy}
+                    type="text"
+                    className="input border-2 border-rose-200 focus:border-rose-700 placeholder-gray-400"
+                    placeholder="Ex: 0.5"
+                    value={qtdCompra}
+                    onChange={e => setQtdCompra(e.target.value)}
+                  />
+                </label>
+
+                <button disabled={isBusy} onClick={salvarIngrediente} className="btn btn-primary ingredient-form__submit">
+                  {ingredienteEditandoId !== null ? "✓ Atualizar" : "+ Adicionar"}
                 </button>
               </div>
             </div>
@@ -990,12 +1069,11 @@ export default function App() {
                 <p className="text-sm text-gray-400 text-center py-8">Nenhum ingrediente cadastrado</p>
               ) : (
                 <div className="space-y-3">
-                  {ingredientes.map((i, idx) => {
+                  {ingredientes.map((i) => {
                     const custo = custoMedio(i.id);
                     const isPeso = i.unidade === "kg" || i.unidade === "g";
                     const displayCusto = i.unidade === "g" ? custo * 1000 : custo;
                     const displayUnidade = isPeso ? "kg" : i.unidade;
-                    const labelUnidade = isPeso ? "kg" : i.unidade;
 
                     return (
                       <div key={`ing-${i.id}`} className="flex flex-col sm:flex-row sm:justify-between gap-3 border-b border-rose-100 py-4 last:border-b-0 items-stretch sm:items-start hover:bg-rose-50 px-3 rounded-lg transition">
@@ -1006,8 +1084,8 @@ export default function App() {
                         <div className="grid grid-cols-4 gap-2 sm:flex sm:items-center sm:ml-4 shrink-0">
                           <button disabled={isBusy} onClick={() => registrarCompra(i)} className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 font-semibold text-xs rounded-md" aria-label={`Registrar compra de ${i.nome}`}>💳</button>
                           <button disabled={isBusy} onClick={() => adicionarNaReceita(i)} className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 font-semibold text-xs rounded-md" aria-label={`Usar ${i.nome} na receita`}>✅</button>
-                          <button disabled={isBusy} onClick={() => editarIngrediente(idx)} className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 font-semibold text-xs rounded-md" aria-label={`Editar ${i.nome}`}>✏️</button>
-                          <button disabled={isBusy} onClick={() => removerIngrediente(idx)} className="small-btn bg-red-100 text-red-700 hover:bg-red-200 font-semibold text-xs rounded-md" aria-label={`Remover ${i.nome}`}>🗑️</button>
+                          <button disabled={isBusy} onClick={() => editarIngrediente(i)} className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 font-semibold text-xs rounded-md" aria-label={`Editar ${i.nome}`}>✏️</button>
+                          <button disabled={isBusy} onClick={() => removerIngrediente(i)} className="small-btn bg-red-100 text-red-700 hover:bg-red-200 font-semibold text-xs rounded-md" aria-label={`Remover ${i.nome}`}>🗑️</button>
                         </div>
                       </div>
                     );
@@ -1244,11 +1322,11 @@ export default function App() {
         </div>
       </Modal>
 
-      <Modal isOpen={confirmOpen} onClose={() => setConfirmOpen(false)} title="⚠️ Confirmação">
+      <Modal isOpen={confirmOpen} onClose={fecharConfirmacao} title="⚠️ Confirmação">
         <div className="space-y-4">
           <p className="text-gray-700 font-medium text-lg">{confirmMessage}</p>
           <div className="flex flex-col sm:flex-row gap-3 sm:justify-end pt-4 border-t border-gray-200">
-            <button disabled={isBusy} className="btn bg-gray-200 text-gray-700 hover:bg-gray-300" onClick={() => setConfirmOpen(false)}>Não</button>
+            <button disabled={isBusy} className="btn bg-gray-200 text-gray-700 hover:bg-gray-300" onClick={fecharConfirmacao}>Não</button>
             <button disabled={isBusy} className="btn bg-red-500 text-white hover:bg-red-600" onClick={handleConfirmYes}>Sim, excluir</button>
           </div>
         </div>
