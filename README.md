@@ -11,25 +11,24 @@ Sistema web em React para controlar custos, receitas e vendas de uma confeitaria
 - Configuracao de preco por kg, preco por fatia e fatias por bolo.
 - Cadastro, edicao e exclusao de vendas.
 - Resumo financeiro com vendas, lucro, ticket medio, margem estimada e resultados da semana.
-- Persistencia local com IndexedDB via Dexie.
-- Sincronizacao em nuvem com Firebase Firestore.
+- Persistencia em nuvem com Firebase Firestore.
+- Atualizacao em tempo real entre dispositivos conectados.
 
 ## Persistencia e sincronizacao
 
-O app salva primeiro no IndexedDB para manter a experiencia rapida no dispositivo. Em seguida, cada operacao envia ao Firestore apenas o documento alterado:
+O Firestore e a fonte unica de verdade do sistema. A aplicacao carrega os dados do Firebase, mantem uma copia em memoria enquanto a tela esta aberta e grava cada alteracao diretamente no documento afetado:
 
 - adicionar/atualizar usa `setDoc` no documento afetado;
 - excluir usa `deleteDoc` no documento afetado;
-- exclusoes pendentes ficam registradas localmente para evitar que dados antigos voltem em uma sincronizacao posterior.
+- listeners em tempo real atualizam a interface quando o banco muda.
 
-O sync geral ainda existe para inicializacao e migracao de dados locais, mas as acoes normais de CRUD usam gravacao por item.
+O app tambem usa o cache persistente nativo do Firestore configurado em `firebase.js`, sem banco local proprio.
 
 ## Tecnologias
 
 - React
 - Vite
 - Tailwind CSS
-- Dexie / IndexedDB
 - Firebase Auth anonimo
 - Firebase Firestore
 

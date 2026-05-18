@@ -1,11 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import React from "react";
 import {
-  db,
+  createId,
   deleteFromFirestore,
+  getAllFromFirestore,
   saveToFirestore,
-  syncFromFirestore,
-  syncToFirestore,
   setupRealtimeSync,
 } from "./db";
 import FinancialSummary from "./components/FinancialSummary";
@@ -32,7 +31,6 @@ export default function App() {
   const [qtdCompra, setQtdCompra] = useState("");
   const [editIndex, setEditIndex] = useState(null);
 
-  const [precoVenda, setPrecoVenda] = useState("");
   const [precoUnitario, setPrecoUnitario] = useState("");
   const [usePrecoPorUnidade, setUsePrecoPorUnidade] = useState(false);
 
@@ -79,124 +77,155 @@ export default function App() {
     let isMounted = true;
     let stopRealtimeSync = () => {};
 
-    const migrarLocalStorage = async () => {
-      // Migra dados do localStorage para o IndexedDB na primeira vez
+    const getConfigValor = (configs, chave) =>
+      configs.find((config) => config.chave === chave)?.valor || "";
+
+    const aplicarColecao = (coll, data) => {
+      if (!isMounted) return;
+
+      if (coll === "ingredientes") setIngredientes(data);
+      if (coll === "compras") setCompras(data);
+      if (coll === "receita") setReceita(data);
+      if (coll === "vendas") setVendas(data);
+      if (coll === "receitas") {
+        setReceitas(data);
+        setReceitaSelecionadaId((receitaAtual) => {
+          const receitaExiste = data.some((receitaItem) => String(receitaItem.id) === String(receitaAtual));
+          return receitaExiste ? receitaAtual : data[0]?.id ?? null;
+        });
+      }
+      if (coll === "config") {
+        setPrecoBolo(getConfigValor(data, "precoBolo"));
+        setPrecoFatia(getConfigValor(data, "precoFatia"));
+        setFatiasPerBolo(getConfigValor(data, "fatiasPerBolo"));
+      }
+    };
+
+    const aplicarDados = (dados) => {
+      if (!isMounted) return;
+
+      const receitasData = dados.receitas || [];
+      const configs = dados.config || [];
+
+      setIngredientes(dados.ingredientes || []);
+      setCompras(dados.compras || []);
+      setReceita(dados.receita || []);
+      setReceitas(receitasData);
+      setReceitaSelecionadaId(receitasData[0]?.id ?? null);
+      setVendas(dados.vendas || []);
+      setPrecoBolo(getConfigValor(configs, "precoBolo"));
+      setPrecoFatia(getConfigValor(configs, "precoFatia"));
+      setFatiasPerBolo(getConfigValor(configs, "fatiasPerBolo"));
+    };
+
+    const temDadosRemotos = (dados) =>
+      ["ingredientes", "compras", "receita", "receitas", "vendas", "config"]
+        .some((coll) => (dados[coll] || []).length > 0);
+
+    const migrarLocalStorageParaFirestore = async (dadosAtuais) => {
       const raw = localStorage.getItem("sistema_bolos");
-      const jaTemDados = (await db.ingredientes.count()) > 0;
+      if (!raw || temDadosRemotos(dadosAtuais)) return dadosAtuais;
 
-      if (raw && !jaTemDados) {
-        try {
-          const data = JSON.parse(raw);
-          let ingredientesData = data.ingredientes || [];
-          let comprasData = data.compras || [];
+      try {
+        const data = JSON.parse(raw);
+        let ingredientesData = data.ingredientes || [];
+        let comprasData = data.compras || [];
+        const receitaData = data.receita || [];
 
-          // Converte unidade "g" para "kg" e ajusta quantidades
-          comprasData = comprasData.map(c => {
-            const ing = ingredientesData.find(i => i.id === c.ingredienteId);
-            if (ing && ing.unidade === "g") return { ...c, quantidade: c.quantidade / 1000 };
-            return c;
-          });
-          ingredientesData = ingredientesData.map(i =>
-            i.unidade === "g" ? { ...i, unidade: "kg" } : i
-          );
+        comprasData = comprasData.map((compra) => {
+          const ingrediente = ingredientesData.find((item) => String(item.id) === String(compra.ingredienteId));
+          if (ingrediente && ingrediente.unidade === "g") return { ...compra, quantidade: compra.quantidade / 1000 };
+          return compra;
+        });
+        ingredientesData = ingredientesData.map((ingrediente) =>
+          ingrediente.unidade === "g" ? { ...ingrediente, unidade: "kg" } : ingrediente
+        );
 
-          if (ingredientesData.length) await db.ingredientes.bulkPut(ingredientesData);
-          if (comprasData.length) await db.compras.bulkAdd(comprasData);
-          if ((data.receita || []).length) await db.receita.bulkAdd(data.receita);
-          if (data.precoVenda) await db.config.put({ chave: "precoVenda", valor: data.precoVenda });
+        const writes = [
+          ...ingredientesData.map((item) => saveToFirestore("ingredientes", { ...item, id: item.id ?? createId() })),
+          ...comprasData.map((item) => saveToFirestore("compras", { ...item, id: item.id ?? createId() })),
+          ...receitaData.map((item) => saveToFirestore("receita", { ...item, id: item.id ?? createId() })),
+        ];
 
-          localStorage.removeItem("sistema_bolos");
-        } catch (error) {
-          console.error("Erro ao migrar dados do localStorage:", error);
+        if (data.precoVenda) {
+          writes.push(saveToFirestore("config", { chave: "precoVenda", valor: data.precoVenda }));
+        }
+
+        await Promise.all(writes);
+        localStorage.removeItem("sistema_bolos");
+        return getAllFromFirestore();
+      } catch (error) {
+        console.error("Erro ao migrar dados do localStorage:", error);
+        return dadosAtuais;
+      }
+    };
+
+    const garantirReceitas = async (dados) => {
+      let receitasData = [...(dados.receitas || [])];
+      let receitaData = [...(dados.receita || [])];
+      const writes = [];
+
+      if (receitasData.length === 0) {
+        const receitaPadrao = {
+          id: createId(),
+          nome: "Receita principal",
+          data: new Date().toISOString(),
+        };
+        receitasData = [receitaPadrao];
+        writes.push(saveToFirestore("receitas", receitaPadrao));
+      }
+
+      const receitaPadraoId = receitasData[0]?.id;
+      const itensSemReceita = receitaData.filter((item) => item.receitaId === undefined || item.receitaId === null);
+      if (receitaPadraoId && itensSemReceita.length > 0) {
+        receitaData = receitaData.map((item) => {
+          if (item.receitaId !== undefined && item.receitaId !== null) return item;
+
+          const itemAtualizado = {
+            ...item,
+            id: item.id ?? createId(),
+            receitaId: receitaPadraoId,
+            receitaNome: receitasData[0].nome,
+          };
+          writes.push(saveToFirestore("receita", itemAtualizado));
+          return itemAtualizado;
+        });
+      }
+
+      if (writes.length > 0) {
+        await Promise.all(writes);
+      }
+
+      return {
+        ...dados,
+        receitas: receitasData,
+        receita: receitaData,
+      };
+    };
+
+    const carregarDados = async () => {
+      setFirebaseStatus("syncing");
+
+      try {
+        let dados = await getAllFromFirestore();
+        dados = await migrarLocalStorageParaFirestore(dados);
+        dados = await garantirReceitas(dados);
+
+        aplicarDados(dados);
+
+        if (!isMounted) return;
+        setFirebaseStatus("synced");
+        stopRealtimeSync();
+        stopRealtimeSync = setupRealtimeSync(aplicarColecao);
+      } catch (error) {
+        console.error("Erro ao carregar dados do Firebase:", error);
+        if (isMounted) {
+          mostrarErroFirebase(error, "carregar dados do Firebase");
         }
       }
     };
 
-    const carregarDadosLocais = async () => {
-      let [ings, comps, rec, receitasData, cfg, vends] = await Promise.all([
-        db.ingredientes.toArray(),
-        db.compras.toArray(),
-        db.receita.toArray(),
-        db.receitas.toArray(),
-        db.config.get("precoVenda"),
-        db.vendas.toArray(),
-      ]);
-
-      let deveSincronizarReceitas = false;
-
-      if (receitasData.length === 0) {
-        const receitaPadrao = {
-          nome: "Receita principal",
-          data: new Date().toISOString(),
-        };
-        const receitaPadraoId = await db.receitas.add(receitaPadrao);
-        receitasData = [{ ...receitaPadrao, id: receitaPadraoId }];
-        deveSincronizarReceitas = true;
-      }
-
-      const receitaPadraoId = receitasData[0]?.id;
-      const itensSemReceita = rec.filter(r => r.receitaId === undefined || r.receitaId === null);
-
-      if (receitaPadraoId && itensSemReceita.length > 0) {
-        await Promise.all(
-          itensSemReceita.map(item =>
-            db.receita.update(item.id, {
-              receitaId: receitaPadraoId,
-              receitaNome: receitasData[0].nome,
-            })
-          )
-        );
-        rec = await db.receita.toArray();
-        deveSincronizarReceitas = true;
-      }
-
-      if (deveSincronizarReceitas) {
-        sincronizarFirebase("sincronizar receitas");
-      }
-
-      // Carrega configurações de vendas
-      const [cfgBolo, cfgFatia, cfgFatias] = await Promise.all([
-        db.config.get("precoBolo"),
-        db.config.get("precoFatia"),
-        db.config.get("fatiasPerBolo"),
-      ]);
-
-      if (!isMounted) return;
-
-      setIngredientes(ings);
-      setCompras(comps);
-      setReceita(rec);
-      setReceitas(receitasData);
-      setReceitaSelecionadaId(receitaPadraoId || null);
-      setPrecoVenda(cfg?.valor || "");
-      setVendas(vends);
-      setPrecoBolo(cfgBolo?.valor || "");
-      setPrecoFatia(cfgFatia?.valor || "");
-      setFatiasPerBolo(cfgFatias?.valor || "");
-    };
-
-    const sincronizarDadosRemotos = async () => {
-      // Primeiro sobe o que existe localmente; depois baixa o que veio do Firebase.
-      await aguardarOuContinuar(sincronizarFirebase("salvar dados locais no Firebase"));
-      await syncFromFirestore();
-      await carregarDadosLocais();
-
-      if (!isMounted) return;
-      stopRealtimeSync();
-      stopRealtimeSync = setupRealtimeSync();
-    };
-
-    const carregarDados = async () => {
-      await migrarLocalStorage();
-      await carregarDadosLocais();
-      sincronizarDadosRemotos().catch((error) => {
-        console.error("Erro ao sincronizar dados remotos:", error);
-      });
-    };
-
-    carregarDados().catch((error) => {
-      console.error("Erro ao carregar dados locais:", error);
-    });
+    carregarDados();
 
     return () => {
       isMounted = false;
@@ -242,53 +271,11 @@ export default function App() {
     console.error(`Erro ao ${acao}:`, error);
     setFirebaseStatus("error");
     setAlertMessage(
-      `Os dados ficaram salvos neste dispositivo, mas não consegui ${acao} no Firebase. ` +
+      `Não consegui ${acao}. ` +
       `Verifique a conexão e as regras do Firestore. Detalhe: ${error.message || error}`
     );
     setAlertOpen(true);
   };
-
-  const sincronizarFirebase = (acao = "salvar os dados") => {
-    const syncId = firebaseSyncIdRef.current + 1;
-    firebaseSyncIdRef.current = syncId;
-    setFirebaseStatus("syncing");
-
-    const timeoutId = setTimeout(() => {
-      if (firebaseSyncIdRef.current === syncId) {
-        setFirebaseStatus("pending");
-      }
-    }, 8000);
-
-    const syncPromise = syncToFirestore();
-
-    syncPromise
-      .then(() => {
-        if (firebaseSyncIdRef.current === syncId) {
-          setFirebaseStatus("synced");
-        }
-      })
-      .catch((error) => {
-        if (firebaseSyncIdRef.current === syncId) {
-          mostrarErroFirebase(error, acao);
-        }
-      })
-      .finally(() => {
-        clearTimeout(timeoutId);
-      });
-
-    return syncPromise;
-  };
-
-  const aguardarOuContinuar = (promise, timeoutMs = 5000) =>
-    new Promise((resolve) => {
-      const timeoutId = setTimeout(resolve, timeoutMs);
-      promise
-        .catch(() => {})
-        .finally(() => {
-          clearTimeout(timeoutId);
-          resolve();
-        });
-    });
 
   const executarOperacaoBanco = async (acao, operacao) => {
     const syncId = firebaseSyncIdRef.current + 1;
@@ -325,9 +312,6 @@ export default function App() {
     );
   };
 
-  const removerDoFirebase = async (coll, itemOrId, acao) =>
-    executarOperacaoBanco(acao, () => deleteFromFirestore(coll, itemOrId));
-
   const salvarIngrediente = async () => {
     const nomeLimpo = nome.trim();
     if (!nomeLimpo) return;
@@ -354,7 +338,6 @@ export default function App() {
     if (editIndex !== null) {
       const ing = ingredientes[editIndex];
       const ingredienteAtualizado = { ...ing, nome: nomeLimpo, unidade };
-      await db.ingredientes.put(ingredienteAtualizado);
       setIngredientes(prev => prev.map((item, i) => i === editIndex ? ingredienteAtualizado : item));
       itensParaSalvar.push({ coll: "ingredientes", item: ingredienteAtualizado });
 
@@ -369,7 +352,7 @@ export default function App() {
           quantidade: quantidadeArmazenada,
           data: new Date().toISOString()
         };
-        const compraId = await db.compras.add(novaCompra);
+        const compraId = createId();
         const compraComId = { ...novaCompra, id: compraId };
         setCompras(prev => [...prev, compraComId]);
         itensParaSalvar.push({ coll: "compras", item: compraComId });
@@ -386,9 +369,8 @@ export default function App() {
         return;
       }
 
-      const id = Date.now();
+      const id = createId();
       const novoIngrediente = { id, nome: nomeLimpo, unidade };
-      await db.ingredientes.put(novoIngrediente);
       setIngredientes(prev => [...prev, novoIngrediente]);
       itensParaSalvar.push({ coll: "ingredientes", item: novoIngrediente });
 
@@ -402,7 +384,7 @@ export default function App() {
         quantidade: quantidadeArmazenada,
         data: new Date().toISOString()
       };
-      const compraId = await db.compras.add(novaCompra);
+      const compraId = createId();
       const compraComId = { ...novaCompra, id: compraId };
       setCompras(prev => [...prev, compraComId]);
       itensParaSalvar.push({ coll: "compras", item: compraComId });
@@ -464,7 +446,7 @@ export default function App() {
       quantidade: qtdArmazenada,
       data: new Date().toISOString()
     };
-    const compraId = await db.compras.add(novaCompra);
+    const compraId = createId();
     const compraComId = { ...novaCompra, id: compraId };
     setCompras(prev => [...prev, compraComId]);
     setCompraModalOpen(false);
@@ -546,7 +528,7 @@ export default function App() {
       data: new Date().toISOString()
     };
 
-    const itemId = await db.receita.add(novoItem);
+    const itemId = createId();
     const itemComId = { ...novoItem, id: itemId };
     setReceita(prev => [...prev, itemComId]);
     await salvarItensNoFirebase(
@@ -590,10 +572,10 @@ export default function App() {
   };
 
   const removerDaReceita = async (itemId) => {
-    await db.receita.delete(itemId);
+    await executarOperacaoBanco("remover item da receita no Firebase", () =>
+      deleteFromFirestore("receita", itemId)
+    );
     setReceita(prev => prev.filter(r => r.id !== itemId));
-
-    await removerDoFirebase("receita", itemId, "remover item da receita no Firebase");
   };
 
   const removerReceita = (receitaParaRemover) => {
@@ -621,14 +603,14 @@ export default function App() {
     }
 
     const novaReceita = {
+      id: createId(),
       nome: nomeNormalizado,
       data: new Date().toISOString(),
     };
-    const receitaId = await db.receitas.add(novaReceita);
-    const receitaComId = { ...novaReceita, id: receitaId };
+    const receitaComId = novaReceita;
 
     setReceitas(prev => [...prev, receitaComId]);
-    setReceitaSelecionadaId(receitaId);
+    setReceitaSelecionadaId(receitaComId.id);
     setNomeReceita("");
 
     await salvarItensNoFirebase(
@@ -650,7 +632,6 @@ export default function App() {
       fatiasPerBolo && { chave: "fatiasPerBolo", valor: parseNumero(fatiasPerBolo) },
     ].filter(Boolean);
 
-    await Promise.all(configs.map((config) => db.config.put(config)));
     await salvarItensNoFirebase(
       configs.map((config) => ({ coll: "config", item: config })),
       "salvar configurações no Firebase"
@@ -737,14 +718,13 @@ export default function App() {
 
     if (vendaEditandoId !== null) {
       const vendaAtualizada = { ...dadosVenda, id: vendaEditandoId };
-      await db.vendas.put(vendaAtualizada);
       setVendas(prev => prev.map(v => String(v.id) === String(vendaEditandoId) ? vendaAtualizada : v));
       await salvarItensNoFirebase(
         [{ coll: "vendas", item: vendaAtualizada }],
         "atualizar venda no Firebase"
       );
     } else {
-      const vendaId = await db.vendas.add(dadosVenda);
+      const vendaId = createId();
       const vendaComId = { ...dadosVenda, id: vendaId };
       setVendas(prev => [...prev, vendaComId]);
       await salvarItensNoFirebase(
@@ -784,11 +764,7 @@ export default function App() {
     if (confirmAction === "delete-ingredient" && confirmData) {
       const { index } = confirmData;
       const id = ingredientes[index].id;
-      const comprasDoIngrediente = await db.compras.where("ingredienteId").equals(id).toArray();
-      await db.compras.where("ingredienteId").equals(id).delete();
-      await db.ingredientes.delete(id);
-      setIngredientes(prev => prev.filter((_, i) => i !== index));
-      setCompras(prev => prev.filter(c => c.ingredienteId !== id));
+      const comprasDoIngrediente = compras.filter(c => String(c.ingredienteId) === String(id));
       await executarOperacaoBanco("remover ingrediente no Firebase", () =>
         Promise.all([
           deleteFromFirestore("ingredientes", id),
@@ -797,6 +773,8 @@ export default function App() {
           ),
         ])
       );
+      setIngredientes(prev => prev.filter((_, i) => i !== index));
+      setCompras(prev => prev.filter(c => String(c.ingredienteId) !== String(id)));
       if (editIndex === index) {
         setNome("");
         setUnidade("kg");
@@ -808,9 +786,10 @@ export default function App() {
       }
     } else if (confirmAction === "delete-sale" && confirmData) {
       const { vendaId } = confirmData;
-      await db.vendas.delete(vendaId);
+      await executarOperacaoBanco("remover venda no Firebase", () =>
+        deleteFromFirestore("vendas", vendaId)
+      );
       setVendas(prev => prev.filter(v => v.id !== vendaId));
-      await removerDoFirebase("vendas", vendaId, "remover venda no Firebase");
     } else if (confirmAction === "delete-recipe" && confirmData) {
       const { receitaId } = confirmData;
       const receitaIdComparacao = String(receitaId);
@@ -821,17 +800,6 @@ export default function App() {
       const idsItens = itensDaReceita.map(item => item.id);
       const receitasRestantes = receitas.filter(r => String(r.id) !== receitaIdComparacao);
       const receitaSelecionadaRemovida = String(receitaSelecionadaIdAtual) === receitaIdComparacao;
-
-      await db.receitas.delete(receitaId);
-      if (idsItens.length > 0) {
-        await db.receita.bulkDelete(idsItens);
-      }
-
-      setReceitas(receitasRestantes);
-      setReceita(prev => prev.filter(item => !idsItens.includes(item.id)));
-      if (receitaSelecionadaRemovida) {
-        setReceitaSelecionadaId(receitasRestantes[0]?.id ?? null);
-      }
       await executarOperacaoBanco("remover receita no Firebase", () =>
         Promise.all([
           deleteFromFirestore("receitas", receitaId),
@@ -840,6 +808,12 @@ export default function App() {
           ),
         ])
       );
+
+      setReceitas(receitasRestantes);
+      setReceita(prev => prev.filter(item => !idsItens.includes(item.id)));
+      if (receitaSelecionadaRemovida) {
+        setReceitaSelecionadaId(receitasRestantes[0]?.id ?? null);
+      }
     }
     setConfirmOpen(false);
     setConfirmAction(null);
@@ -915,8 +889,8 @@ export default function App() {
   const firebaseStatusLabel = operacaoAtual || firebaseStatusInfo.label;
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#fff7fc] text-gray-900">
-      <header className="bg-gradient-to-r from-pink-500 via-purple-500 to-blue-600 text-white shadow-sm border-b border-white/20">
+    <div className="app-shell min-h-screen flex flex-col text-gray-900">
+      <header className="app-header text-white shadow-sm border-b border-white/20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-5 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
           <div className="flex flex-grow items-center gap-3">
             <img className="h-12 w-12" src={sunflowerIcon} alt="" />
@@ -927,7 +901,7 @@ export default function App() {
               <p className="text-white/85 text-sm m-0">Controle dos custos e receitas para suas encomendas</p>
             </div>
           </div>
-          <span className={`inline-flex w-fit items-center rounded-md border px-3 py-1 text-xs font-bold ${firebaseStatusInfo.className}`}>
+          <span className={`sync-status inline-flex w-fit items-center rounded-md border px-3 py-1 text-xs font-bold ${firebaseStatusInfo.className}`}>
             {firebaseStatusLabel}
           </span>
         </div>
@@ -1242,7 +1216,7 @@ export default function App() {
         </div>
       </Modal>
 
-      <footer className="bg-white/85 border-t border-pink-100 py-5">
+      <footer className="app-footer bg-white/85 border-t border-pink-100 py-5">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 text-center">
           <p className="text-rose-950 font-bold">🎂 Feito com ❤️ para minha confeiteira predileta!</p>
           <p className="text-xs text-gray-600 mt-1">Sistema de Controle de Custos • v1.0</p>
