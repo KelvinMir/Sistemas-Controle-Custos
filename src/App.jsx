@@ -9,6 +9,8 @@ import {
 } from "./db";
 import FinancialSummary from "./components/FinancialSummary";
 import Modal from "./components/Modal";
+import PrettySelect from "./components/PrettySelect";
+import PurchaseHistory from "./components/PurchaseHistory";
 import SalesPanel from "./components/SalesPanel";
 import sunflowerIcon from "./img/sunflower-svgrepo-com.svg";
 import { dataInputParaISO, formatarDataLocal, isoParaDataInput } from "./utils/dates";
@@ -16,8 +18,10 @@ import { parseNumero } from "./utils/numbers";
 
 
 export default function App() {
+  const [paginaAtiva, setPaginaAtiva] = useState("controle");
   const [ingredientes, setIngredientes] = useState([]);
   const [compras, setCompras] = useState([]);
+  const [ingredienteHistoricoId, setIngredienteHistoricoId] = useState("");
   const [receita, setReceita] = useState([]);
   const [receitas, setReceitas] = useState([]);
   const [receitaSelecionadaId, setReceitaSelecionadaId] = useState(null);
@@ -844,6 +848,20 @@ export default function App() {
   });
   const custoCatalogoReceitas = resumoReceitas.reduce((acc, r) => acc + r.custo, 0);
   const ingredienteReceitaSelecionado = ingredientes.find(i => String(i.id) === String(ingredienteReceitaId));
+  const ingredienteHistoricoSelecionadoId = ingredientes.some(i => String(i.id) === String(ingredienteHistoricoId))
+    ? ingredienteHistoricoId
+    : ingredientes[0]?.id ?? "";
+  const unidadeOptions = [
+    { value: "kg", label: "Kg", description: "Quilos" },
+    { value: "un", label: "Unidade", description: "Itens unitários" },
+    { value: "pacote", label: "Pacote", description: "Pacotes fechados" },
+    { value: "litro", label: "Litro", description: "Líquidos" },
+  ];
+  const ingredientesReceitaOptions = ingredientes.map((ingrediente) => ({
+    value: ingrediente.id,
+    label: ingrediente.nome,
+    description: labelPrecoPorUnidade(ingrediente.unidade),
+  }));
   const qtdIngredienteReceitaNumero = parseNumero(qtdIngredienteReceita);
   const custoPrevistoIngredienteReceita = ingredienteReceitaSelecionado && qtdIngredienteReceitaNumero
     ? normalizarQuantidadeReceita(qtdIngredienteReceitaNumero, ingredienteReceitaSelecionado.unidade) * custoMedio(ingredienteReceitaSelecionado.id)
@@ -908,6 +926,28 @@ export default function App() {
       </header>
 
       <main className="flex-1 mx-auto w-full max-w-7xl px-4 sm:px-6 py-5 sm:py-8">
+        <div className="page-tabs mb-5" role="tablist" aria-label="Páginas do sistema">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={paginaAtiva === "controle"}
+            className={`page-tab ${paginaAtiva === "controle" ? "is-active" : ""}`}
+            onClick={() => setPaginaAtiva("controle")}
+          >
+            Controle
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={paginaAtiva === "historico"}
+            className={`page-tab ${paginaAtiva === "historico" ? "is-active" : ""}`}
+            onClick={() => setPaginaAtiva("historico")}
+          >
+            Histórico de compras
+          </button>
+        </div>
+
+        {paginaAtiva === "controle" ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 lg:gap-6 items-start">
           <div className="lg:col-span-2 space-y-5 lg:space-y-6">
             <div className="card border border-rose-100/80 bg-white/95">
@@ -915,12 +955,14 @@ export default function App() {
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
                 <input disabled={isBusy} className="input border-2 border-rose-200 focus:border-rose-700 placeholder-gray-400" placeholder="Nome" value={nome} onChange={e => setNome(e.target.value)} />
 
-                <select disabled={isBusy} className="input border-2 border-rose-200 focus:border-rose-700 bg-white" value={unidade} onChange={e => setUnidade(e.target.value)}>
-                  <option value="kg">Kg</option>
-                  <option value="un">Unidade</option>
-                  <option value="pacote">Pacote</option>
-                  <option value="litro">Litro</option>
-                </select>
+                <PrettySelect
+                  value={unidade}
+                  onChange={setUnidade}
+                  options={unidadeOptions}
+                  ariaLabel="Unidade do ingrediente"
+                  disabled={isBusy}
+                  buttonClassName="border-2 border-rose-200 focus:border-rose-700"
+                />
 
                 <div className="border-2 border-rose-200 p-3 rounded-lg bg-rose-50/80 sm:col-span-2 xl:col-span-1">
                   <div className="flex gap-2 items-center mb-2">
@@ -1032,19 +1074,16 @@ export default function App() {
                   <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,0.9fr)_auto] gap-3 items-end">
                     <div>
                       <label className="text-xs font-semibold text-gray-600 block mb-1">Ingrediente</label>
-                      <select
-                        className="input border-2 border-rose-200 focus:border-rose-700 bg-white"
+                      <PrettySelect
                         disabled={isBusy}
                         value={ingredienteReceitaId}
-                        onChange={e => setIngredienteReceitaId(e.target.value)}
-                      >
-                        <option value="">Selecione</option>
-                        {ingredientes.map((ingrediente) => (
-                          <option key={`receita-ing-${ingrediente.id}`} value={ingrediente.id}>
-                            {ingrediente.nome}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={setIngredienteReceitaId}
+                        options={ingredientesReceitaOptions}
+                        placeholder="Selecione"
+                        emptyMessage="Nenhum ingrediente cadastrado"
+                        ariaLabel="Ingrediente da receita"
+                        buttonClassName="border-2 border-rose-200 focus:border-rose-700"
+                      />
                     </div>
 
                     <div>
@@ -1157,6 +1196,14 @@ export default function App() {
 
           </aside>
         </div>
+        ) : (
+          <PurchaseHistory
+            ingredientes={ingredientes}
+            compras={compras}
+            ingredienteSelecionadoId={ingredienteHistoricoSelecionadoId}
+            onSelectIngrediente={setIngredienteHistoricoId}
+          />
+        )}
       </main>
       <Modal isOpen={compraModalOpen} onClose={() => setCompraModalOpen(false)} title={compraModalIngrediente ? `💳 Registrar compra — ${compraModalIngrediente.nome}` : 'Registrar compra'}>
         <div className="space-y-4">
