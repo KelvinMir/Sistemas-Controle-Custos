@@ -1,34 +1,13 @@
 import PrettySelect from "./PrettySelect";
 import { formatarDataBR } from "../utils/dates";
-import { parseNumero } from "../utils/numbers";
-
-const formatarMoeda = (valor) =>
-  Number(valor || 0).toLocaleString("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  });
-
-const formatarQuantidade = (valor) =>
-  Number(valor || 0).toLocaleString("pt-BR", {
-    maximumFractionDigits: 3,
-  });
-
-const dataCompraTime = (compra) => {
-  const time = new Date(compra.data).getTime();
-  return Number.isFinite(time) ? time : 0;
-};
-
-const unidadeParaCompra = (ingrediente) => {
-  if (!ingrediente) return "un";
-  if (ingrediente.unidade === "g") return "kg";
-  return ingrediente.unidade || "un";
-};
-
-const precoUnitarioCompra = (compra) => {
-  const quantidade = parseNumero(compra.quantidade);
-  if (quantidade <= 0) return 0;
-  return parseNumero(compra.preco) / quantidade;
-};
+import {
+  comprasDoIngrediente as obterComprasDoIngrediente,
+  estatisticasCompras,
+  formatarMoeda,
+  formatarQuantidade,
+  precoUnitarioCompra,
+  unidadeParaCompra,
+} from "../utils/analytics";
 
 export default function PurchaseHistory({
   ingredientes,
@@ -42,9 +21,7 @@ export default function PurchaseHistory({
 
   const ingredienteIdAtual = ingredienteSelecionado?.id ?? "";
   const unidadeAtual = unidadeParaCompra(ingredienteSelecionado);
-  const comprasDoIngrediente = compras
-    .filter((compra) => String(compra.ingredienteId) === String(ingredienteIdAtual))
-    .sort((compraA, compraB) => dataCompraTime(compraB) - dataCompraTime(compraA));
+  const comprasDoIngrediente = obterComprasDoIngrediente(compras, ingredienteIdAtual);
 
   const opcoesIngredientes = ingredientes.map((ingrediente) => {
     const totalCompras = compras.filter(
@@ -58,22 +35,15 @@ export default function PurchaseHistory({
     };
   });
 
-  const totalGasto = comprasDoIngrediente.reduce(
-    (acc, compra) => acc + parseNumero(compra.preco),
-    0
-  );
-  const quantidadeTotal = comprasDoIngrediente.reduce(
-    (acc, compra) => acc + parseNumero(compra.quantidade),
-    0
-  );
-  const precoMedio = quantidadeTotal > 0 ? totalGasto / quantidadeTotal : 0;
-  const ultimaCompra = comprasDoIngrediente[0] || null;
-  const ultimaCompraPrecoUnitario = ultimaCompra ? precoUnitarioCompra(ultimaCompra) : 0;
-  const precosUnitarios = comprasDoIngrediente
-    .map(precoUnitarioCompra)
-    .filter((precoUnitario) => precoUnitario > 0);
-  const maiorPrecoUnitario = Math.max(...precosUnitarios, 0);
-  const menorPrecoUnitario = precosUnitarios.length > 0 ? Math.min(...precosUnitarios) : 0;
+  const {
+    totalGasto,
+    quantidadeTotal,
+    precoMedio,
+    ultimaCompra,
+    ultimoPrecoUnitario,
+    menorPrecoUnitario,
+    maiorPrecoUnitario,
+  } = estatisticasCompras(comprasDoIngrediente);
 
   return (
     <section className="space-y-5 lg:space-y-6">
@@ -117,7 +87,7 @@ export default function PurchaseHistory({
           </div>
           <div className="purchase-stat">
             <span>Última compra</span>
-            <strong>{ultimaCompra ? formatarMoeda(ultimaCompraPrecoUnitario) : "R$ 0,00"} / {unidadeAtual}</strong>
+            <strong>{ultimaCompra ? formatarMoeda(ultimoPrecoUnitario) : "R$ 0,00"} / {unidadeAtual}</strong>
           </div>
         </div>
       </div>
@@ -143,8 +113,8 @@ export default function PurchaseHistory({
           ) : (
             <div className="space-y-3">
               {comprasDoIngrediente.map((compra) => {
-                const quantidade = parseNumero(compra.quantidade);
-                const precoTotal = parseNumero(compra.preco);
+                const quantidade = compra.quantidade;
+                const precoTotal = compra.preco;
                 const precoUnitario = precoUnitarioCompra(compra);
 
                 return (
