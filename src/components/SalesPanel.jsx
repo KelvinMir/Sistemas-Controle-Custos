@@ -1,4 +1,5 @@
 import { formatarDataBR } from "../utils/dates";
+import { formatarMoeda } from "../utils/analytics";
 import { parseNumero } from "../utils/numbers";
 
 export default function SalesPanel({
@@ -32,113 +33,167 @@ export default function SalesPanel({
   isBusy,
 }) {
   const isEditingVenda = vendaEditandoId !== null && vendaEditandoId !== undefined;
+  const precoPadraoAtual = tipoVenda === "bolo" ? parseNumero(precoBolo) : parseNumero(precoFatia);
+  const precoManual = parseNumero(valorVenda);
+  const precoAplicado = precoManual > 0 ? precoManual : precoPadraoAtual;
+  const quantidadeVenda = parseNumero(qtdVenda);
+  const valorEstimado = quantidadeVenda > 0 && precoAplicado > 0
+    ? quantidadeVenda * precoAplicado
+    : 0;
+  const unidadeQuantidadeVenda = tipoVenda === "bolo" ? "kg" : "fatia(s)";
+  const unidadePrecoVenda = tipoVenda === "bolo" ? "kg" : "fatia";
+  const origemPreco = precoManual > 0 ? "manual" : "padrão";
+
+  const totalVendas = vendas.reduce((sum, v) => sum + parseNumero(v.valor), 0);
 
   return (
     <>
-      <div className="card border border-rose-200/80 bg-white/95">
+      {/* Configurar Vendas Card */}
+      <div className="card sales-config-card">
         <button
           type="button"
           onClick={() => setShowConfigVendas(prev => !prev)}
-          className="w-full flex items-center justify-between gap-3 text-left"
+          className="sales-disclosure"
           aria-expanded={showConfigVendas}
           disabled={isBusy}
         >
-          <span>
-            <span className="block font-bold text-lg text-rose-950">⚙️ Configurar Vendas</span>
-            <span className="block text-xs text-gray-500 mt-1">Preços e fatias ficam guardados para os próximos registros.</span>
+          <span className="sales-disclosure__copy">
+            <span>⚙️ Configurar Vendas</span>
+            <small>Preços e fatias ficam guardados para os próximos registros.</small>
           </span>
-          <span className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 shrink-0">
+          <span className="sales-disclosure__icon" aria-hidden="true">
             {showConfigVendas ? "▲" : "▼"}
           </span>
         </button>
 
         {showConfigVendas && (
-          <div className="pt-4 mt-4 border-t border-rose-100">
-            <div className="space-y-3 mb-4">
-              <div>
-                <label className="text-xs font-semibold text-gray-600 block mb-1">Preço por kg (bolo inteiro)</label>
-                <input disabled={isBusy} type="text" className="input border-2 border-rose-200 focus:border-rose-700" placeholder="R$ ex: 45.00" value={precoBolo} onChange={e => setPrecoBolo(e.target.value)} />
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-gray-600 block mb-1">Preço por fatia</label>
-                <input disabled={isBusy} type="text" className="input border-2 border-rose-200 focus:border-rose-700" placeholder="R$ ex: 8.50" value={precoFatia} onChange={e => setPrecoFatia(e.target.value)} />
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-gray-600 block mb-1">Fatias por bolo</label>
-                <input disabled={isBusy} type="text" className="input border-2 border-rose-200 focus:border-rose-700" placeholder="ex: 12" value={fatiasPerBolo} onChange={e => setFatiasPerBolo(e.target.value)} />
-              </div>
+          <div className="sales-config-card__body">
+            <div className="sales-config-form">
+              <label className="sales-form__field">
+                <span>Preço por kg</span>
+                <input disabled={isBusy} type="text" className="input" placeholder="R$ 45,00" value={precoBolo} onChange={e => setPrecoBolo(e.target.value)} />
+              </label>
+              <label className="sales-form__field">
+                <span>Preço por fatia</span>
+                <input disabled={isBusy} type="text" className="input" placeholder="R$ 8,50" value={precoFatia} onChange={e => setPrecoFatia(e.target.value)} />
+              </label>
+              <label className="sales-form__field">
+                <span>Fatias por bolo</span>
+                <input disabled={isBusy} type="text" className="input" placeholder="12" value={fatiasPerBolo} onChange={e => setFatiasPerBolo(e.target.value)} />
+              </label>
             </div>
             <button disabled={isBusy} onClick={onSalvarConfigsVendas} className="btn btn-primary w-full">💾 Salvar Configuração</button>
           </div>
         )}
       </div>
 
+      {/* Nova Venda Card */}
       {showNovaVenda ? (
-        <div className="card bg-rose-50/90 border border-rose-200/80">
-          <h3 className="font-bold text-lg mb-4 text-rose-950">
-            {isEditingVenda ? "✏️ Editar Venda" : "🛍️ Registrar Venda"}
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-            <label className="flex items-center gap-2 cursor-pointer p-3 bg-white rounded-lg border-2 border-rose-200 hover:border-rose-500 transition">
-              <input disabled={isBusy} type="radio" value="fatias" checked={tipoVenda === "fatias"} onChange={e => { setTipoVenda(e.target.value); setValorVenda(""); }} name="tipoVenda" className="accent-rose-800" />
-              <span className="text-sm font-semibold text-gray-700">🍰 Fatias</span>
+        <div className="card sales-entry-card">
+          <div className="sales-entry-card__header">
+            <div>
+              <h3>{isEditingVenda ? "✏️ Editar Venda" : "🛍️ Registrar Venda"}</h3>
+            </div>
+            <span>{isEditingVenda ? "Editando" : "Novo registro"}</span>
+          </div>
+
+          <div className="sales-type-control" role="radiogroup" aria-label="Tipo de venda">
+            <label className={`sales-type-option ${tipoVenda === "fatias" ? "is-active" : ""}`}>
+              <input disabled={isBusy} type="radio" value="fatias" checked={tipoVenda === "fatias"} onChange={e => { setTipoVenda(e.target.value); setValorVenda(""); }} name="tipoVenda" />
+              <span>🍰</span>
+              <strong>Fatias</strong>
             </label>
-            <label className="flex items-center gap-2 cursor-pointer p-3 bg-white rounded-lg border-2 border-rose-200 hover:border-rose-500 transition">
-              <input disabled={isBusy} type="radio" value="bolo" checked={tipoVenda === "bolo"} onChange={e => { setTipoVenda(e.target.value); setValorVenda(""); }} name="tipoVenda" className="accent-rose-800" />
-              <span className="text-sm font-semibold text-gray-700">🎂 Bolo Inteiro</span>
+            <label className={`sales-type-option ${tipoVenda === "bolo" ? "is-active" : ""}`}>
+              <input disabled={isBusy} type="radio" value="bolo" checked={tipoVenda === "bolo"} onChange={e => { setTipoVenda(e.target.value); setValorVenda(""); }} name="tipoVenda" />
+              <span>🎂</span>
+              <strong>Bolo inteiro</strong>
             </label>
           </div>
 
-          <div className="space-y-3">
-            <input disabled={isBusy} type="text" className="input border-2 border-rose-200 focus:border-rose-700" placeholder={tipoVenda === "bolo" ? "Quantidade (kg, ex: 2.5)" : "Quantidade (ex: 3)"} value={qtdVenda} onChange={e => setQtdVenda(e.target.value)} />
-            <div>
-              <label htmlFor="valorVendaManual" className="text-xs font-semibold text-gray-600 block mb-1">
-                {tipoVenda === "bolo" ? "Valor por kg nesta venda" : "Valor por fatia nesta venda"}
-              </label>
+          <div className="sales-form">
+            <label className="sales-form__field">
+              <span>Quantidade</span>
+              <input disabled={isBusy} type="text" className="input" placeholder={tipoVenda === "bolo" ? "Ex: 2.5 kg" : "Ex: 3"} value={qtdVenda} onChange={e => setQtdVenda(e.target.value)} />
+            </label>
+
+            <label className="sales-form__field">
+              <span>{tipoVenda === "bolo" ? "Valor por kg" : "Valor por fatia"}</span>
               <input
                 id="valorVendaManual"
                 disabled={isBusy}
                 type="text"
-                className="input border-2 border-rose-200 focus:border-rose-700"
-                placeholder={tipoVenda === "bolo" ? `Opcional - padrão R$ ${parseNumero(precoBolo).toFixed(2)} / kg` : `Opcional - padrão R$ ${parseNumero(precoFatia).toFixed(2)} / fatia`}
+                className="input"
+                placeholder={`Padrão ${formatarMoeda(precoPadraoAtual)} / ${unidadePrecoVenda}`}
                 value={valorVenda}
                 onChange={e => setValorVenda(e.target.value)}
               />
+            </label>
+
+            <label className="sales-form__field">
+              <span>Data</span>
+              <input disabled={isBusy} type="date" className="input" value={dataVenda} onChange={e => setDataVenda(e.target.value)} />
+            </label>
+
+            <div className="sales-total-preview">
+              <span>Total estimado</span>
+              <strong>{formatarMoeda(valorEstimado)}</strong>
+              <small>{quantidadeVenda > 0 ? `${quantidadeVenda} ${unidadeQuantidadeVenda} com preço ${origemPreco}` : "Informe a quantidade"}</small>
             </div>
-            <input disabled={isBusy} type="date" className="input border-2 border-rose-200 focus:border-rose-700" value={dataVenda} onChange={e => setDataVenda(e.target.value)} />
-            <textarea disabled={isBusy} className="input border-2 border-rose-200 focus:border-rose-700 resize-none" placeholder="Anotação (ex: Cliente: Maria, Entrega 14h)" value={anotacaoVenda} onChange={e => setAnotacaoVenda(e.target.value)} rows="3" />
+
+            <label className="sales-form__field sales-form__field--note">
+              <span>Anotação</span>
+              <textarea disabled={isBusy} className="input resize-none" placeholder="Cliente, entrega, observações..." value={anotacaoVenda} onChange={e => setAnotacaoVenda(e.target.value)} rows="3" />
+            </label>
           </div>
-          <div className="flex flex-col sm:flex-row gap-3 mt-4">
-            <button disabled={isBusy} onClick={onSubmitVenda} className="btn btn-primary flex-1">
+
+          <div className="sales-form__actions">
+            <button disabled={isBusy} onClick={onSubmitVenda} className="btn btn-primary">
               {isEditingVenda ? "✓ Atualizar" : "✅ Registrar"}
             </button>
-            <button disabled={isBusy} onClick={onCancelVenda} className="btn flex-1 bg-gray-200 text-gray-700 hover:bg-gray-300">❌ Cancelar</button>
+            <button disabled={isBusy} onClick={onCancelVenda} className="btn bg-gray-200 text-gray-700 hover:bg-gray-300">Cancelar</button>
           </div>
         </div>
       ) : (
-        <button disabled={isBusy} onClick={() => setShowNovaVenda(true)} className="btn btn-primary w-full shadow-md">+ Nova Venda</button>
+        <button disabled={isBusy} onClick={() => setShowNovaVenda(true)} className="btn btn-primary sales-new-sale-button shadow-md">+ Nova Venda</button>
       )}
 
-      <div className="card border border-rose-200/80 bg-white/95">
-        <h3 className="font-bold text-lg mb-4 text-rose-950">📋 Vendas Realizadas</h3>
+      {/* Vendas Realizadas Card */}
+      <div className="card sales-list-card">
+        {/* Header com resumo */}
+        <div className="sales-list-header">
+          <div className="sales-list-title-section">
+            <h3>📋 Vendas Realizadas</h3>
+            <span className="sales-list-count">{vendas.length} venda{vendas.length === 1 ? "" : "s"}</span>
+          </div>
+          {vendas.length > 0 && (
+            <div className="sales-list-summary">
+              <div className="sales-list-summary__item">
+                <span>Total</span>
+                <strong>{formatarMoeda(totalVendas)}</strong>
+              </div>
+            </div>
+          )}
+        </div>
+
         {vendas.length === 0 ? (
-          <p className="text-sm text-gray-400 text-center py-8">Nenhuma venda registrada</p>
+          <div className="sales-list-empty">
+            <p className="text-sm text-gray-400">Nenhuma venda registrada</p>
+            <small className="text-gray-300">Clique em "Nova Venda" para registrar sua primeira venda</small>
+          </div>
         ) : (
-          <div className="space-y-3">
+          <div className="sales-list-container">
             {vendas.map((v) => (
-              <div key={`vend-${v.id}`} className="border-b border-rose-100 pb-4 last:border-b-0 hover:bg-rose-50 p-3 rounded-lg transition">
-                <div className="flex flex-col sm:flex-row lg:flex-col xl:flex-row justify-between gap-3 items-stretch sm:items-start">
-                  <div className="flex-1 text-sm min-w-0">
-                    <p className="font-bold text-gray-800 break-words">{v.descricao}</p>
-                    {v.anotacao && <p className="text-xs text-gray-600 mt-1 bg-rose-50 p-2 rounded border-l-2 border-rose-300 break-words">📝 {v.anotacao}</p>}
-                    <p className="text-xs text-gray-500 mt-2">📅 {formatarDataBR(v.data)}</p>
-                  </div>
-                  <div className="flex items-center justify-between sm:justify-end lg:justify-between xl:justify-end gap-3 shrink-0">
-                    <p className="font-bold text-lg text-emerald-700 break-words">R$ {Number(v.valor || 0).toFixed(2)}</p>
-                    <div className="flex items-center gap-2">
-                      <button disabled={isBusy} onClick={() => onEditarVenda(v)} className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 font-semibold rounded-md" aria-label="Editar venda">✏️</button>
-                      <button disabled={isBusy} onClick={() => onRemoverVenda(v.id)} className="small-btn bg-red-100 text-red-700 hover:bg-red-200 font-semibold rounded-md" aria-label="Remover venda">🗑️</button>
-                    </div>
+              <div key={`vend-${v.id}`} className="sales-row">
+                <div className="sales-row__main">
+                  <p>{v.descricao}</p>
+                  <span>📅 {formatarDataBR(v.data)}</span>
+                  {v.anotacao && <small>📝 {v.anotacao}</small>}
+                </div>
+                <div className="sales-row__side">
+                  <strong>{formatarMoeda(v.valor)}</strong>
+                  <div className="sales-row__actions">
+                    <button disabled={isBusy} onClick={() => onEditarVenda(v)} className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 font-semibold rounded-md" aria-label="Editar venda">✏️</button>
+                    <button disabled={isBusy} onClick={() => onRemoverVenda(v.id)} className="small-btn bg-red-100 text-red-700 hover:bg-red-200 font-semibold rounded-md" aria-label="Remover venda">🗑️</button>
                   </div>
                 </div>
               </div>
