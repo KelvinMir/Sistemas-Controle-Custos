@@ -12,8 +12,12 @@ import Modal from "./components/Modal";
 import PrettySelect from "./components/PrettySelect";
 import PurchaseHistory from "./components/PurchaseHistory";
 import SalesPanel from "./components/SalesPanel";
+import PriceHistory from "./components/PriceHistory";
+import PeriodComparison from "./components/PeriodComparison";
+import IngredientCategories from "./components/IngredientCategories";
 import sunflowerIcon from "./img/sunflower-svgrepo-com.svg";
 import { dataInputParaISO, formatarDataLocal, isoParaDataInput } from "./utils/dates";
+import { comprasDoIngrediente, estatisticasCompras } from "./utils/analytics";
 import { parseNumero } from "./utils/numbers";
 
 
@@ -60,6 +64,11 @@ export default function App() {
   const [firebaseStatus, setFirebaseStatus] = useState("idle");
   const [operacaoAtual, setOperacaoAtual] = useState("");
   const firebaseSyncIdRef = useRef(0);
+
+  // Novos modais de análises
+  const [priceHistoryOpen, setPriceHistoryOpen] = useState(false);
+  const [periodComparisonOpen, setPeriodComparisonOpen] = useState(false);
+  const [ingredientCategoriesOpen, setIngredientCategoriesOpen] = useState(false);
 
   // VENDAS
   const [precoBolo, setPrecoBolo] = useState("");
@@ -483,14 +492,7 @@ export default function App() {
   };
 
   const custoMedio = (ingredienteId) => {
-    const lista = compras.filter(c => String(c.ingredienteId) === String(ingredienteId));
-
-    const totalValor = lista.reduce((acc, c) => acc + parseNumero(c.preco), 0);
-    const totalQtd = lista.reduce((acc, c) => acc + parseNumero(c.quantidade), 0);
-
-    if (totalQtd <= 0) return 0;
-
-    return totalValor / totalQtd;
+    return estatisticasCompras(comprasDoIngrediente(compras, ingredienteId)).precoMedio;
   };
 
   const normalizarQuantidadeReceita = (quantidade, unidadeIngrediente) => {
@@ -788,6 +790,22 @@ export default function App() {
     setTimeout(() => setConfirmOpen(true), 0);
   };
 
+  const atualizarIngredienteComCategoria = async (ingredienteAtualizado) => {
+    const atualizou = await executarOperacaoBanco("atualizar categoria do ingrediente", () =>
+      saveToFirestore("ingredientes", ingredienteAtualizado)
+    );
+
+    if (atualizou) {
+      setIngredientes(prev =>
+        prev.map(ing =>
+          String(ing.id) === String(ingredienteAtualizado.id)
+            ? ingredienteAtualizado
+            : ing
+        )
+      );
+    }
+  };
+
   const fecharConfirmacao = () => {
     setConfirmOpen(false);
     setConfirmAction(null);
@@ -947,25 +965,54 @@ export default function App() {
       </header>
 
       <main className="flex-1 mx-auto w-full max-w-7xl px-4 sm:px-6 py-5 sm:py-8">
-        <div className="page-tabs mb-5" role="tablist" aria-label="Páginas do sistema">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={paginaAtiva === "controle"}
-            className={`page-tab ${paginaAtiva === "controle" ? "is-active" : ""}`}
-            onClick={() => setPaginaAtiva("controle")}
-          >
-            Controle
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={paginaAtiva === "historico"}
-            className={`page-tab ${paginaAtiva === "historico" ? "is-active" : ""}`}
-            onClick={() => setPaginaAtiva("historico")}
-          >
-            Histórico de compras
-          </button>
+        <div className="mb-5 flex flex-wrap gap-2 items-center justify-between">
+          <div className="page-tabs" role="tablist" aria-label="Páginas do sistema">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={paginaAtiva === "controle"}
+              className={`page-tab ${paginaAtiva === "controle" ? "is-active" : ""}`}
+              onClick={() => setPaginaAtiva("controle")}
+            >
+              Controle
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={paginaAtiva === "historico"}
+              className={`page-tab ${paginaAtiva === "historico" ? "is-active" : ""}`}
+              onClick={() => setPaginaAtiva("historico")}
+            >
+              Histórico de compras
+            </button>
+          </div>
+
+          <div className="analysis-launcher" aria-label="Ferramentas de análise">
+            <button
+              type="button"
+              onClick={() => setIngredientCategoriesOpen(true)}
+              className="analysis-launch-button"
+              title="Categorizar ingredientes"
+            >
+              📂 Categorias
+            </button>
+            <button
+              type="button"
+              onClick={() => setPriceHistoryOpen(true)}
+              className="analysis-launch-button"
+              title="Ver histórico de preços"
+            >
+              📊 Preços
+            </button>
+            <button
+              type="button"
+              onClick={() => setPeriodComparisonOpen(true)}
+              className="analysis-launch-button"
+              title="Comparar períodos"
+            >
+              📈 Comparar
+            </button>
+          </div>
         </div>
 
         {paginaAtiva === "controle" ? (
@@ -1340,6 +1387,33 @@ export default function App() {
           </div>
         </div>
       </Modal>
+
+      {priceHistoryOpen && (
+        <PriceHistory
+          ingredientes={ingredientes}
+          compras={compras}
+          isOpen={priceHistoryOpen}
+          onClose={() => setPriceHistoryOpen(false)}
+        />
+      )}
+
+      {periodComparisonOpen && (
+        <PeriodComparison
+          vendas={vendas}
+          compras={compras}
+          isOpen={periodComparisonOpen}
+          onClose={() => setPeriodComparisonOpen(false)}
+        />
+      )}
+
+      {ingredientCategoriesOpen && (
+        <IngredientCategories
+          ingredientes={ingredientes}
+          onUpdateIngrediente={atualizarIngredienteComCategoria}
+          isOpen={ingredientCategoriesOpen}
+          onClose={() => setIngredientCategoriesOpen(false)}
+        />
+      )}
 
       <footer className="app-footer bg-white/85 border-t border-pink-100 py-5">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 text-center">
