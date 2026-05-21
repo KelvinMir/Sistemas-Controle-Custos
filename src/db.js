@@ -1,7 +1,7 @@
 import dbFirestore, { authReady } from "./firebase";
 import { collection, deleteDoc, doc, getDocs, onSnapshot, setDoc } from "firebase/firestore";
 
-export const collections = ["ingredientes", "compras", "receita", "receitas", "vendas", "config"];
+export const collections = ["ingredientes", "compras", "receita", "receitas", "vendas", "config", "outrosItens"];
 
 const isFirebaseConfigured = () => dbFirestore && typeof dbFirestore !== "undefined";
 

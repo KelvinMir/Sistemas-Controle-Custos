@@ -29,5 +29,9 @@ service cloud.firestore {
     match /config/{document=**} {
       allow read, write: if isSignedIn();
     }
+
+    match /outrosItens/{document=**} {
+      allow read, write: if isSignedIn();
+    }
   }
 }

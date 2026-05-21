@@ -32,6 +32,18 @@ export default function App() {
   const [nomeReceita, setNomeReceita] = useState("");
   const [ingredienteReceitaId, setIngredienteReceitaId] = useState("");
   const [qtdIngredienteReceita, setQtdIngredienteReceita] = useState("");
+  
+  // Outros itens - catálogo
+  const [outrosItens, setOutrosItens] = useState([]);
+  const [nomeOutroItem, setNomeOutroItem] = useState("");
+  const [valorOutroItem, setValorOutroItem] = useState("");
+  const [qtdOutroItem, setQtdOutroItem] = useState("");
+  const [outroItemEditandoId, setOutroItemEditandoId] = useState(null);
+  
+  // Modal para usar outro item na receita
+  const [usarOutroItemModalOpen, setUsarOutroItemModalOpen] = useState(false);
+  const [usarOutroItemModal, setUsarOutroItemModal] = useState(null);
+  const [usarOutroItemQtd, setUsarOutroItemQtd] = useState("1");
 
   const [nome, setNome] = useState("");
   const [unidade, setUnidade] = useState("kg");
@@ -64,6 +76,7 @@ export default function App() {
   const [firebaseStatus, setFirebaseStatus] = useState("idle");
   const [operacaoAtual, setOperacaoAtual] = useState("");
   const firebaseSyncIdRef = useRef(0);
+  const outroItemFormRef = useRef(null);
 
   // Novos modais de análises
   const [priceHistoryOpen, setPriceHistoryOpen] = useState(false);
@@ -100,6 +113,7 @@ export default function App() {
       if (coll === "compras") setCompras(data);
       if (coll === "receita") setReceita(data);
       if (coll === "vendas") setVendas(data);
+      if (coll === "outrosItens") setOutrosItens(data);
       if (coll === "receitas") {
         setReceitas(data);
         setReceitaSelecionadaId((receitaAtual) => {
@@ -126,13 +140,14 @@ export default function App() {
       setReceitas(receitasData);
       setReceitaSelecionadaId(receitasData[0]?.id ?? null);
       setVendas(dados.vendas || []);
+      setOutrosItens(dados.outrosItens || []);
       setPrecoBolo(getConfigValor(configs, "precoBolo"));
       setPrecoFatia(getConfigValor(configs, "precoFatia"));
       setFatiasPerBolo(getConfigValor(configs, "fatiasPerBolo"));
     };
 
     const temDadosRemotos = (dados) =>
-      ["ingredientes", "compras", "receita", "receitas", "vendas", "config"]
+      ["ingredientes", "compras", "receita", "receitas", "vendas", "config", "outrosItens"]
         .some((coll) => (dados[coll] || []).length > 0);
 
     const migrarLocalStorageParaFirestore = async (dadosAtuais) => {
@@ -271,6 +286,122 @@ export default function App() {
     setPrecoUnitario("");
     setUsePrecoPorUnidade(false);
     setQtdCompra("");
+  };
+
+  const limparFormularioOutroItem = () => {
+    setNomeOutroItem("");
+    setValorOutroItem("");
+    setQtdOutroItem("");
+    setOutroItemEditandoId(null);
+  };
+
+  const salvarOutroItem = async () => {
+    const nomeLimpo = nomeOutroItem.trim();
+    if (!nomeLimpo) return;
+
+    const valorNum = parseNumero(valorOutroItem);
+    const qtdNum = parseNumero(qtdOutroItem);
+
+    if (valorNum <= 0) {
+      setAlertMessage("Informe o valor unitário do outro item.");
+      setAlertOpen(true);
+      return;
+    }
+
+    if (qtdNum <= 0) {
+      setAlertMessage("Informe a quantidade do outro item.");
+      setAlertOpen(true);
+      return;
+    }
+
+    if (outroItemEditandoId !== null) {
+      const outroItemAtualizado = {
+        id: outroItemEditandoId,
+        nome: nomeLimpo,
+        valor: valorNum,
+        quantidade: qtdNum,
+        data: new Date().toISOString()
+      };
+      setOutrosItens(prev => prev.map(item =>
+        String(item.id) === String(outroItemEditandoId) ? outroItemAtualizado : item
+      ));
+      await salvarItensNoFirebase(
+        [{ coll: "outrosItens", item: outroItemAtualizado }],
+        "atualizar outro item no Firebase"
+      );
+    } else {
+      const id = createId();
+      const novoOutroItem = {
+        id,
+        nome: nomeLimpo,
+        valor: valorNum,
+        quantidade: qtdNum,
+        data: new Date().toISOString()
+      };
+      setOutrosItens(prev => [...prev, novoOutroItem]);
+      await salvarItensNoFirebase(
+        [{ coll: "outrosItens", item: novoOutroItem }],
+        "salvar outro item no Firebase"
+      );
+    }
+
+    limparFormularioOutroItem();
+  };
+
+  const editarOutroItem = (outroItem) => {
+    setNomeOutroItem(outroItem.nome);
+    setValorOutroItem(String(outroItem.valor));
+    setQtdOutroItem(String(outroItem.quantidade || ""));
+    setOutroItemEditandoId(outroItem.id);
+    setTimeout(() => outroItemFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+  };
+
+  const removerOutroItem = (outroItem) => {
+    setConfirmMessage(`Tem certeza que deseja excluir o item "${outroItem.nome}"?`);
+    setConfirmAction("delete-outro-item");
+    setConfirmData({ outroItemId: outroItem.id });
+    setTimeout(() => setConfirmOpen(true), 0);
+  };
+
+  const adicionarOutroItemNaReceita = (outroItem) => {
+    setUsarOutroItemModal(outroItem);
+    setUsarOutroItemQtd("1");
+    setTimeout(() => setUsarOutroItemModalOpen(true), 0);
+  };
+
+  const adicionarOutroItemNaReceitaExec = async () => {
+    const outroItem = usarOutroItemModal;
+    if (!outroItem || !receitaSelecionada) return;
+
+    const qtd = parseNumero(usarOutroItemQtd);
+    if (!qtd || qtd <= 0) {
+      setAlertMessage("Informe uma quantidade maior que zero.");
+      setAlertOpen(true);
+      return;
+    }
+
+    const novoItem = {
+      receitaId: receitaSelecionada.id,
+      receitaNome: receitaSelecionada.nome,
+      tipo: "outro",
+      outroItemId: outroItem.id,
+      nome: outroItem.nome,
+      qtd,
+      unidade: "un",
+      custoUnitario: outroItem.valor,
+      custo: qtd * outroItem.valor,
+      data: new Date().toISOString()
+    };
+
+    const itemId = createId();
+    const itemComId = { ...novoItem, id: itemId };
+    setReceita(prev => [...prev, itemComId]);
+    await salvarItensNoFirebase(
+      [{ coll: "receita", item: itemComId }],
+      "salvar outro item da receita no Firebase"
+    );
+
+    setUsarOutroItemModalOpen(false);
   };
 
   const labelPrecoPorUnidade = (unidadeIngrediente) => {
@@ -503,6 +634,12 @@ export default function App() {
   const unidadeReceita = (unidadeIngrediente) => unidadeIngrediente === "g" ? "kg" : unidadeIngrediente;
 
   const calcularCustoItemReceita = (item) => {
+    if (item.tipo === "outro") {
+      const custoCalculado = Number(item.qtd || 1) * Number(item.custoUnitario || 0);
+      if (custoCalculado > 0) return custoCalculado;
+      return Number(item.custo || 0);
+    }
+
     const ingrediente = ingredientes.find(i => String(i.id) === String(item.ingredienteId));
     const custoUnitarioAtual = ingrediente ? custoMedio(ingrediente.id) : item.custoUnitario;
     const custoAtual = Number(item.qtd || 0) * Number(custoUnitarioAtual || 0);
@@ -884,6 +1021,21 @@ export default function App() {
       if (receitaSelecionadaRemovida) {
         setReceitaSelecionadaId(receitasRestantes[0]?.id ?? null);
       }
+    } else if (confirmAction === "delete-outro-item" && confirmData) {
+      const { outroItemId } = confirmData;
+      const removeu = await executarOperacaoBanco("remover outro item no Firebase", () =>
+        deleteFromFirestore("outrosItens", outroItemId)
+      );
+
+      if (!removeu) {
+        fecharConfirmacao();
+        return;
+      }
+
+      setOutrosItens(prev => prev.filter(item => String(item.id) !== String(outroItemId)));
+      if (String(outroItemEditandoId) === String(outroItemId)) {
+        limparFormularioOutroItem();
+      }
     }
     fecharConfirmacao();
   };
@@ -1244,22 +1396,26 @@ export default function App() {
 
               {itensReceitaSelecionada.length === 0 ? (
                 <p className="text-sm text-gray-400 text-center py-8">
-                  {receitaSelecionada ? `Sem ingredientes em ${receitaSelecionada.nome}` : "Crie uma receita para começar"}
+                  {receitaSelecionada ? `Sem itens em ${receitaSelecionada.nome}` : "Crie uma receita para começar"}
                 </p>
               ) : (
                 <div className="space-y-2">
                   {itensReceitaSelecionada.map((r) => {
+                    const isOutroItem = r.tipo === "outro";
                     const custoItem = calcularCustoItemReceita(r);
                     const ingredienteAtual = ingredientes.find(i => String(i.id) === String(r.ingredienteId));
                     const custoUnitarioAtual = ingredienteAtual ? custoMedio(ingredienteAtual.id) : r.custoUnitario;
+                    const unidadeItem = r.unidade || "un";
+                    const quantidadeItem = Number(r.qtd || (isOutroItem ? 1 : 0));
 
                     return (
                       <div key={`rec-${r.id}`} className="border-b border-rose-100 pb-3 last:border-b-0 hover:bg-rose-50 p-3 rounded-lg transition flex flex-col sm:flex-row lg:flex-col xl:flex-row gap-3 justify-between items-stretch sm:items-center lg:items-stretch xl:items-center">
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-semibold text-gray-800 break-words">{r.nome}</p>
                           <p className="text-xs text-gray-500 mt-1 break-words">
-                            {r.qtd} {r.unidade || "un"} • Custo: <span className="font-semibold text-rose-900">R$ {custoItem.toFixed(2)}</span>
-                            {custoUnitarioAtual > 0 && <span> • Base R$ {Number(custoUnitarioAtual).toFixed(2)} / {r.unidade || "un"}</span>}
+                            {isOutroItem ? "Outro item" : `${r.qtd} ${unidadeItem}`} • Custo: <span className="font-semibold text-rose-900">R$ {custoItem.toFixed(2)}</span>
+                            {custoUnitarioAtual > 0 && <span> • Base R$ {Number(custoUnitarioAtual).toFixed(2)} / {unidadeItem}</span>}
+                            {isOutroItem && quantidadeItem > 1 && <span> • {quantidadeItem} un</span>}
                           </p>
                         </div>
                         <button disabled={isBusy} onClick={() => removerDaReceita(r.id)} className="small-btn bg-red-100 text-red-700 hover:bg-red-200 font-semibold rounded-md self-start sm:self-center lg:self-start xl:self-center" aria-label={`Remover ${r.nome} da receita`}>🗑️</button>
@@ -1268,6 +1424,81 @@ export default function App() {
                   })}
                 </div>
               )}
+            </div>
+
+            <div ref={outroItemFormRef} className="card other-items-card border border-rose-200/80 bg-white/95">
+              <div className="ingredient-entry-card__header">
+                <h2 className="font-bold text-xl text-rose-950">🧾 Outros itens</h2>
+                <span>{outroItemEditandoId !== null ? "Editando" : "Novo cadastro"}</span>
+              </div>
+              <div className="ingredient-form">
+                <label className="ingredient-form__field ingredient-form__field--name">
+                  <span>Nome</span>
+                  <input
+                    disabled={isBusy}
+                    className="input border-2 border-rose-200 focus:border-rose-700 placeholder-gray-400"
+                    placeholder="Ex: embalagem, decoração"
+                    value={nomeOutroItem}
+                    onChange={e => setNomeOutroItem(e.target.value)}
+                  />
+                </label>
+
+                <label className="ingredient-form__field ingredient-form__field--price">
+                  <span>Valor unitário</span>
+                  <input
+                    disabled={isBusy}
+                    type="text"
+                    className="input border-2 border-rose-200 focus:border-rose-700 text-sm"
+                    placeholder="R$ 0,00"
+                    value={valorOutroItem}
+                    onChange={e => setValorOutroItem(e.target.value)}
+                  />
+                </label>
+
+                <label className="ingredient-form__field ingredient-form__field--quantity">
+                  <span>Quantidade</span>
+                  <input
+                    disabled={isBusy}
+                    type="text"
+                    className="input border-2 border-rose-200 focus:border-rose-700 placeholder-gray-400"
+                    placeholder="Ex: 100"
+                    value={qtdOutroItem}
+                    onChange={e => setQtdOutroItem(e.target.value)}
+                  />
+                </label>
+
+                <button disabled={isBusy} onClick={salvarOutroItem} className="btn btn-primary ingredient-form__submit">
+                  {outroItemEditandoId !== null ? "✓ Atualizar" : "+ Adicionar"}
+                </button>
+                {outroItemEditandoId !== null && (
+                  <button disabled={isBusy} onClick={limparFormularioOutroItem} className="btn btn-secondary ingredient-form__submit">
+                    Cancelar
+                  </button>
+                )}
+              </div>
+
+              <div className="mt-6">
+                <h3 className="font-bold text-lg text-rose-950 mb-4">Catálogo de Outros Itens</h3>
+                {outrosItens.length === 0 ? (
+                  <p className="text-sm text-gray-400 text-center py-8">Nenhum outro item cadastrado</p>
+                ) : (
+                  <div className="space-y-3">
+                    {outrosItens.map((item) => (
+                      <div key={`outro-item-${item.id}`} className="flex flex-col sm:flex-row sm:justify-between gap-3 border-b border-rose-100 py-4 last:border-b-0 items-stretch sm:items-start hover:bg-rose-50 px-3 rounded-lg transition">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-bold text-gray-800 break-words">{item.nome}</p>
+                          <p className="text-xs text-gray-500 mt-1 break-words">💰 Valor: R$ <span className="font-semibold text-rose-900">{Number(item.valor).toFixed(2)}</span> / un • Qtd: <span className="font-semibold text-rose-900">{Number(item.quantidade || 1)}</span> un</p>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 sm:flex sm:items-center sm:ml-4 shrink-0">
+                          <button disabled={isBusy} onClick={() => adicionarOutroItemNaReceita(item)} className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 font-semibold text-xs rounded-md" aria-label={`Usar ${item.nome} na receita`}>✅</button>
+                          <button disabled={isBusy} onClick={() => editarOutroItem(item)} className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 font-semibold text-xs rounded-md" aria-label={`Editar ${item.nome}`}>✏️</button>
+                          <button disabled={isBusy} onClick={() => removerOutroItem(item)} className="small-btn bg-red-100 text-red-700 hover:bg-red-200 font-semibold text-xs rounded-md" aria-label={`Remover ${item.nome}`}>🗑️</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
@@ -1365,6 +1596,23 @@ export default function App() {
           <div className="flex flex-col sm:flex-row gap-3 sm:justify-end pt-4 border-t border-gray-200">
             <button disabled={isBusy} className="btn bg-gray-200 text-gray-700 hover:bg-gray-300" onClick={() => setUsarModalOpen(false)}>Cancelar</button>
             <button disabled={isBusy} className="btn btn-primary" onClick={adicionarNaReceitaExec}>✅ Adicionar</button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={usarOutroItemModalOpen} onClose={() => setUsarOutroItemModalOpen(false)} title={usarOutroItemModal ? `✅ Usar — ${usarOutroItemModal.nome} em ${receitaSelecionada?.nome || "receita"}` : 'Usar outro item'}>
+        <div className="space-y-4">
+          <div>
+            <label className="text-sm font-bold text-gray-700 block mb-2">Quantidade (un)</label>
+            <input disabled={isBusy} className="input border-2 border-rose-200 focus:border-rose-700" value={usarOutroItemQtd} onChange={e => setUsarOutroItemQtd(e.target.value)} placeholder="1" />
+          </div>
+          <div>
+            <p className="text-sm text-gray-600">Valor unitário: R$ {usarOutroItemModal ? Number(usarOutroItemModal.valor).toFixed(2) : '0.00'}</p>
+            <p className="text-sm font-bold text-rose-900">Custo total: R$ {usarOutroItemModal ? (parseNumero(usarOutroItemQtd) * Number(usarOutroItemModal.valor)).toFixed(2) : '0.00'}</p>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-3 sm:justify-end pt-4 border-t border-gray-200">
+            <button disabled={isBusy} className="btn bg-gray-200 text-gray-700 hover:bg-gray-300" onClick={() => setUsarOutroItemModalOpen(false)}>Cancelar</button>
+            <button disabled={isBusy} className="btn btn-primary" onClick={adicionarOutroItemNaReceitaExec}>✅ Adicionar</button>
           </div>
         </div>
       </Modal>

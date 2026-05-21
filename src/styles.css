@@ -530,6 +530,138 @@ select.input {
   }
 }
 
+.other-items-card {
+  overflow: visible;
+}
+
+.other-items-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.other-items-card__header h3 {
+  margin: 0;
+  color: var(--rose-dark);
+  font-size: 1.08rem;
+  font-weight: 850;
+  line-height: 1.2;
+}
+
+.other-items-card__header p {
+  margin: 0.3rem 0 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 650;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.other-items-card__header > span {
+  display: inline-flex;
+  min-height: 1.8rem;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 0.25rem 0.55rem;
+  border: 1px solid rgba(143, 29, 69, 0.12);
+  border-radius: 0.45rem;
+  color: var(--rose-dark);
+  background: #fff7fb;
+  font-size: 0.74rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.other-item-form {
+  --other-item-control-height: 2.875rem;
+
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.85rem;
+  align-items: end;
+}
+
+.other-item-form__field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.other-item-form__field > span {
+  color: #6b5a66;
+  font-size: 0.73rem;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.other-item-form .input,
+.other-item-form__preview,
+.other-item-form__submit {
+  min-height: var(--other-item-control-height);
+}
+
+.other-item-form__submit {
+  width: 100%;
+  height: var(--other-item-control-height);
+  align-self: end;
+  white-space: nowrap;
+}
+
+.other-item-form__preview {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid rgba(143, 29, 69, 0.12);
+  border-radius: 0.5rem;
+  background: linear-gradient(180deg, #fff7fb, #ffffff);
+}
+
+.other-item-form__preview span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+  line-height: 1.1;
+}
+
+.other-item-form__preview strong {
+  margin-top: 0.15rem;
+  color: var(--rose-dark);
+  font-size: 1.02rem;
+  font-weight: 900;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 640px) {
+  .other-item-form {
+    grid-template-columns: minmax(0, 1fr) minmax(7rem, 0.55fr);
+  }
+
+  .other-item-form__field--name {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (min-width: 1280px) {
+  .other-item-form {
+    grid-template-columns:
+      minmax(9rem, 1.25fr)
+      minmax(6.5rem, 0.6fr)
+      minmax(8rem, 0.75fr)
+      minmax(7.5rem, 0.7fr)
+      minmax(7.5rem, 0.7fr);
+  }
+
+  .other-item-form__field--name {
+    grid-column: auto;
+  }
+}
+
 .sales-config-card,
 .sales-entry-card,
 .sales-list-card {
