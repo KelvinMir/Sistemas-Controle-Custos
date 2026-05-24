@@ -9,6 +9,8 @@ export default function SalesPanel({
   setPrecoBolo,
   precoFatia,
   setPrecoFatia,
+  precoTorta,
+  setPrecoTorta,
   fatiasPerBolo,
   setFatiasPerBolo,
   onSalvarConfigsVendas,
@@ -22,26 +24,47 @@ export default function SalesPanel({
   setValorVenda,
   anotacaoVenda,
   setAnotacaoVenda,
+  descricaoOutrosVenda,
+  setDescricaoOutrosVenda,
   dataVenda,
   setDataVenda,
   vendaEditandoId,
   onSubmitVenda,
   onCancelVenda,
   vendas,
+  vendaPagamento,
+  onTogglePagamento,
   onEditarVenda,
   onRemoverVenda,
   isBusy,
 }) {
   const isEditingVenda = vendaEditandoId !== null && vendaEditandoId !== undefined;
-  const precoPadraoAtual = tipoVenda === "bolo" ? parseNumero(precoBolo) : parseNumero(precoFatia);
+  
+  let precoPadraoAtual, unidadeQuantidadeVenda, unidadePrecoVenda;
+  if (tipoVenda === "bolo") {
+    precoPadraoAtual = parseNumero(precoBolo);
+    unidadeQuantidadeVenda = "kg";
+    unidadePrecoVenda = "kg";
+  } else if (tipoVenda === "torta") {
+    precoPadraoAtual = parseNumero(precoTorta);
+    unidadeQuantidadeVenda = "torta(s)";
+    unidadePrecoVenda = "torta";
+  } else if (tipoVenda === "outros") {
+    precoPadraoAtual = 0;
+    unidadeQuantidadeVenda = "item(ns)";
+    unidadePrecoVenda = "item";
+  } else {
+    precoPadraoAtual = parseNumero(precoFatia);
+    unidadeQuantidadeVenda = "fatia(s)";
+    unidadePrecoVenda = "fatia";
+  }
+  
   const precoManual = parseNumero(valorVenda);
   const precoAplicado = precoManual > 0 ? precoManual : precoPadraoAtual;
   const quantidadeVenda = parseNumero(qtdVenda);
   const valorEstimado = quantidadeVenda > 0 && precoAplicado > 0
     ? quantidadeVenda * precoAplicado
     : 0;
-  const unidadeQuantidadeVenda = tipoVenda === "bolo" ? "kg" : "fatia(s)";
-  const unidadePrecoVenda = tipoVenda === "bolo" ? "kg" : "fatia";
   const origemPreco = precoManual > 0 ? "manual" : "padrão";
 
   const totalVendas = vendas.reduce((sum, v) => sum + parseNumero(v.valor), 0);
@@ -78,6 +101,10 @@ export default function SalesPanel({
                 <input disabled={isBusy} type="text" className="input" placeholder="R$ 8,50" value={precoFatia} onChange={e => setPrecoFatia(e.target.value)} />
               </label>
               <label className="sales-form__field">
+                <span>Preço por torta</span>
+                <input disabled={isBusy} type="text" className="input" placeholder="R$ 35,00" value={precoTorta} onChange={e => setPrecoTorta(e.target.value)} />
+              </label>
+              <label className="sales-form__field">
                 <span>Fatias por bolo</span>
                 <input disabled={isBusy} type="text" className="input" placeholder="12" value={fatiasPerBolo} onChange={e => setFatiasPerBolo(e.target.value)} />
               </label>
@@ -108,22 +135,48 @@ export default function SalesPanel({
               <span>🎂</span>
               <strong>Bolo inteiro</strong>
             </label>
+            <label className={`sales-type-option ${tipoVenda === "torta" ? "is-active" : ""}`}>
+              <input disabled={isBusy} type="radio" value="torta" checked={tipoVenda === "torta"} onChange={e => { setTipoVenda(e.target.value); setValorVenda(""); }} name="tipoVenda" />
+              <span>🥧</span>
+              <strong>Tortas</strong>
+            </label>
+            <label className={`sales-type-option ${tipoVenda === "outros" ? "is-active" : ""}`}>
+              <input disabled={isBusy} type="radio" value="outros" checked={tipoVenda === "outros"} onChange={e => { setTipoVenda(e.target.value); setValorVenda(""); }} name="tipoVenda" />
+              <span>📦</span>
+              <strong>Outros</strong>
+            </label>
           </div>
 
           <div className="sales-form">
+            {tipoVenda === "outros" && (
+              <label className="sales-form__field">
+                <span>Descrição</span>
+                <input
+                  disabled={isBusy}
+                  type="text"
+                  className="input"
+                  placeholder="Ex: embalagem, frete, decoração"
+                  value={descricaoOutrosVenda}
+                  onChange={e => setDescricaoOutrosVenda(e.target.value)}
+                />
+              </label>
+            )}
+
             <label className="sales-form__field">
               <span>Quantidade</span>
-              <input disabled={isBusy} type="text" className="input" placeholder={tipoVenda === "bolo" ? "Ex: 2.5 kg" : "Ex: 3"} value={qtdVenda} onChange={e => setQtdVenda(e.target.value)} />
+              <input disabled={isBusy} type="text" className="input" placeholder={tipoVenda === "bolo" ? "Ex: 2.5 kg" : tipoVenda === "outros" ? "Ex: 1" : "Ex: 3"} value={qtdVenda} onChange={e => setQtdVenda(e.target.value)} />
             </label>
 
             <label className="sales-form__field">
-              <span>{tipoVenda === "bolo" ? "Valor por kg" : "Valor por fatia"}</span>
+              <span>
+                {tipoVenda === "bolo" ? "Valor por kg" : tipoVenda === "outros" ? "Valor unitário" : "Valor da Torta"}
+              </span>
               <input
                 id="valorVendaManual"
                 disabled={isBusy}
                 type="text"
                 className="input"
-                placeholder={`Padrão ${formatarMoeda(precoPadraoAtual)} / ${unidadePrecoVenda}`}
+                placeholder={tipoVenda === "outros" ? "R$ 0,00" : `Padrão ${formatarMoeda(precoPadraoAtual)} / ${unidadePrecoVenda}`}
                 value={valorVenda}
                 onChange={e => setValorVenda(e.target.value)}
               />
@@ -182,22 +235,39 @@ export default function SalesPanel({
           </div>
         ) : (
           <div className="sales-list-container">
-            {vendas.map((v) => (
-              <div key={`vend-${v.id}`} className="sales-row">
-                <div className="sales-row__main">
-                  <p>{v.descricao}</p>
-                  <span>📅 {formatarDataBR(v.data)}</span>
-                  {v.anotacao && <small>📝 {v.anotacao}</small>}
-                </div>
-                <div className="sales-row__side">
-                  <strong>{formatarMoeda(v.valor)}</strong>
+            {vendas
+              .sort((a, b) => new Date(b.data) - new Date(a.data))
+              .map((v) => (
+                <div key={`vend-${v.id}`} className="sales-row">
+                  <div className="sales-row__content">
+                    <div className="sales-row__info">
+                      <p className="sales-row__title">{v.descricao}</p>
+                      <div className="sales-row__meta">
+                        <span className="sales-row__date">{formatarDataBR(v.data)}</span>
+                        {v.anotacao && <span className="sales-row__note">{v.anotacao}</span>}
+                      </div>
+                    </div>
+                    <div className="sales-row__footer">
+                      <div className="sales-row__value">{formatarMoeda(v.valor)}</div>
+                      <label className="sales-row__payment">
+                        <input
+                          type="checkbox"
+                          checked={vendaPagamento[v.id] || false}
+                          onChange={() => onTogglePagamento(v.id)}
+                          disabled={isBusy}
+                        />
+                        <span className={`status ${vendaPagamento[v.id] ? "paid" : "pending"}`}>
+                          {vendaPagamento[v.id] ? "✓ Pago" : "Pendente"}
+                        </span>
+                      </label>
+                    </div>
+                  </div>
                   <div className="sales-row__actions">
-                    <button disabled={isBusy} onClick={() => onEditarVenda(v)} className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 font-semibold rounded-md" aria-label="Editar venda">✏️</button>
-                    <button disabled={isBusy} onClick={() => onRemoverVenda(v.id)} className="small-btn bg-red-100 text-red-700 hover:bg-red-200 font-semibold rounded-md" aria-label="Remover venda">🗑️</button>
+                    <button disabled={isBusy} onClick={() => onEditarVenda(v)} className="sales-action-btn edit" title="Editar venda">✏️</button>
+                    <button disabled={isBusy} onClick={() => onRemoverVenda(v.id)} className="sales-action-btn delete" title="Remover venda">🗑️</button>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))}
           </div>
         )}
       </div>
