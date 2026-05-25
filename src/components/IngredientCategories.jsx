@@ -43,7 +43,7 @@ export default function IngredientCategories({
     ...todasCategorias.map((categoria) => ({
       value: categoria,
       label: categoria,
-      description: `${ingredientes.filter((ingrediente) => ingrediente.categoria === categoria).length} ingrediente(s)`,
+      description: `${ingredientes.filter((ingrediente) => ingrediente.categoria === categoria).length} ${ingredientes.filter((ingrediente) => ingrediente.categoria === categoria).length === 1 ? "ingrediente" : "ingredientes"}`,
     })),
   ];
 

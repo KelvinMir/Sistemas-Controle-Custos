@@ -883,7 +883,7 @@ export default function App() {
 
       if (precoAplicado > 0) {
         valorFinal = qtd * precoAplicado;
-        descricao = `${qtd} fatia(s) @ R$ ${precoAplicado.toFixed(2)} / fatia${origemPreco === "manual" ? " (valor informado)" : ""}`;
+        descricao = `${qtd} ${qtd === 1 ? "fatia" : "fatias"} R$ ${precoAplicado.toFixed(2)} / fatia${origemPreco === "manual" ? " (valor informado)" : ""}`;
       } else {
         setAlertMessage("Configure o preço padrão da fatia ou informe o valor por fatia nesta venda.");
         setAlertOpen(true);
@@ -895,7 +895,7 @@ export default function App() {
 
       if (precoAplicado > 0) {
         valorFinal = qtd * precoAplicado;
-        descricao = `${qtd} kg @ R$ ${precoAplicado.toFixed(2)} / kg${origemPreco === "manual" ? " (valor informado)" : ""}`;
+        descricao = `${qtd} kg R$ ${precoAplicado.toFixed(2)} / kg${origemPreco === "manual" ? " (valor informado)" : ""}`;
       } else {
         setAlertMessage("Configure o preço padrão por kg do bolo inteiro ou informe o valor por kg nesta venda.");
         setAlertOpen(true);
@@ -907,7 +907,7 @@ export default function App() {
 
       if (precoAplicado > 0) {
         valorFinal = qtd * precoAplicado;
-        descricao = `${qtd} torta(s) @ R$ ${precoAplicado.toFixed(2)} / torta${origemPreco === "manual" ? " (valor informado)" : ""}`;
+        descricao = `${qtd} ${qtd === 1 ? "torta" : "tortas"} R$ ${precoAplicado.toFixed(2)} / torta${origemPreco === "manual" ? " (valor informado)" : ""}`;
       } else {
         setAlertMessage("Configure o preço padrão da torta ou informe o valor por torta nesta venda.");
         setAlertOpen(true);
@@ -928,7 +928,7 @@ export default function App() {
       }
       valorFinal = qtd * precoAplicado;
       descricao = qtd > 1
-        ? `${qtd}× ${descricaoLimpa} @ R$ ${precoAplicado.toFixed(2)}`
+        ? `${qtd}× ${descricaoLimpa} R$ ${precoAplicado.toFixed(2)}`
         : `${descricaoLimpa} — R$ ${precoAplicado.toFixed(2)}`;
       origemPreco = "manual";
     }

@@ -40,6 +40,8 @@ export default function SalesPanel({
 }) {
   const isEditingVenda = vendaEditandoId !== null && vendaEditandoId !== undefined;
   
+  const quantidadeVenda = parseNumero(qtdVenda);
+  
   let precoPadraoAtual, unidadeQuantidadeVenda, unidadePrecoVenda;
   if (tipoVenda === "bolo") {
     precoPadraoAtual = parseNumero(precoBolo);
@@ -47,27 +49,39 @@ export default function SalesPanel({
     unidadePrecoVenda = "kg";
   } else if (tipoVenda === "torta") {
     precoPadraoAtual = parseNumero(precoTorta);
-    unidadeQuantidadeVenda = "torta(s)";
+    unidadeQuantidadeVenda = quantidadeVenda === 1 ? "torta" : "tortas";
     unidadePrecoVenda = "torta";
   } else if (tipoVenda === "outros") {
     precoPadraoAtual = 0;
-    unidadeQuantidadeVenda = "item(ns)";
+    unidadeQuantidadeVenda = quantidadeVenda === 1 ? "item" : "itens";
     unidadePrecoVenda = "item";
   } else {
     precoPadraoAtual = parseNumero(precoFatia);
-    unidadeQuantidadeVenda = "fatia(s)";
+    unidadeQuantidadeVenda = quantidadeVenda === 1 ? "fatia" : "fatias";
     unidadePrecoVenda = "fatia";
   }
   
   const precoManual = parseNumero(valorVenda);
   const precoAplicado = precoManual > 0 ? precoManual : precoPadraoAtual;
-  const quantidadeVenda = parseNumero(qtdVenda);
   const valorEstimado = quantidadeVenda > 0 && precoAplicado > 0
     ? quantidadeVenda * precoAplicado
     : 0;
   const origemPreco = precoManual > 0 ? "manual" : "padrão";
 
   const totalVendas = vendas.reduce((sum, v) => sum + parseNumero(v.valor), 0);
+
+  const formatarDescricaoVenda = (venda) => {
+    if (!venda.descricao) return venda.descricao;
+    let desc = venda.descricao;
+    const qtd = parseNumero(venda.quantidade || 0);
+    
+    // Remover (s) e ajustar para singular/plural correto
+    desc = desc.replace(/fatia\(s\)/g, qtd === 1 ? "fatia" : "fatias");
+    desc = desc.replace(/torta\(s\)/g, qtd === 1 ? "torta" : "tortas");
+    desc = desc.replace(/item\(ns\)/g, qtd === 1 ? "item" : "itens");
+    
+    return desc;
+  };
 
   return (
     <>
@@ -241,7 +255,7 @@ export default function SalesPanel({
                 <div key={`vend-${v.id}`} className="sales-row">
                   <div className="sales-row__content">
                     <div className="sales-row__info">
-                      <p className="sales-row__title">{v.descricao}</p>
+                      <p className="sales-row__title">{formatarDescricaoVenda(v)}</p>
                       <div className="sales-row__meta">
                         <span className="sales-row__date">{formatarDataBR(v.data)}</span>
                         {v.anotacao && <span className="sales-row__note">{v.anotacao}</span>}

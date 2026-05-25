@@ -63,7 +63,7 @@ export default function FinancialSummary({
                   <span className="font-bold text-sm shrink-0">R$ {r.custo.toFixed(2)}</span>
                 </span>
                 <span className={selecionada ? "text-xs text-gray-500" : "text-xs text-white/70"}>
-                  {r.totalItens} ingrediente(s)
+                  {r.totalItens} {r.totalItens === 1 ? "ingrediente" : "ingredientes"}
                 </span>
               </button>
             );
