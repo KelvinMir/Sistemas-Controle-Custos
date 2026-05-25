@@ -16,8 +16,8 @@ import PriceHistory from "./components/PriceHistory";
 import PeriodComparison from "./components/PeriodComparison";
 import IngredientCategories from "./components/IngredientCategories";
 import sunflowerIcon from "./img/sunflower-svgrepo-com.svg";
-import { dataInputParaISO, formatarDataLocal, isoParaDataInput } from "./utils/dates";
-import { comprasDoIngrediente, estatisticasCompras } from "./utils/analytics";
+import { dataInputParaISO, formatarDataBR, formatarDataLocal, isoParaDataInput } from "./utils/dates";
+import { comprasDoIngrediente, estatisticasCompras, formatarMoeda } from "./utils/analytics";
 import { parseNumero } from "./utils/numbers";
 
 
@@ -86,14 +86,23 @@ export default function App() {
   // VENDAS
   const [precoBolo, setPrecoBolo] = useState("");
   const [precoFatia, setPrecoFatia] = useState("");
+  const [precoTorta, setPrecoTorta] = useState("");
   const [fatiasPerBolo, setFatiasPerBolo] = useState("");
   const [showConfigVendas, setShowConfigVendas] = useState(false);
   const [vendas, setVendas] = useState([]);
+  const [confirmacaoVendaOpen, setConfirmacaoVendaOpen] = useState(false);
+  const [dadosVendaConfirmacao, setDadosVendaConfirmacao] = useState(null);
+  const [confirmacaoPagamentoOpen, setConfirmacaoPagamentoOpen] = useState(false);
+  const [vendaPagamentoConfirmacao, setVendaPagamentoConfirmacao] = useState(null);
+  
+  // INGREDIENTES
+  const [buscaIngredientes, setBuscaIngredientes] = useState("");
   const [showNovaVenda, setShowNovaVenda] = useState(false);
   const [vendaEditandoId, setVendaEditandoId] = useState(null);
-  const [tipoVenda, setTipoVenda] = useState("fatias"); // "fatias" ou "bolo"
+  const [tipoVenda, setTipoVenda] = useState("fatias"); // "fatias", "bolo", "torta" ou "outros"
   const [qtdVenda, setQtdVenda] = useState("");
   const [valorVenda, setValorVenda] = useState("");
+  const [descricaoOutrosVenda, setDescricaoOutrosVenda] = useState("");
   const [anotacaoVenda, setAnotacaoVenda] = useState("");
   const [dataVenda, setDataVenda] = useState(formatarDataLocal()); // YYYY-MM-DD
 
@@ -124,6 +133,7 @@ export default function App() {
       if (coll === "config") {
         setPrecoBolo(getConfigValor(data, "precoBolo"));
         setPrecoFatia(getConfigValor(data, "precoFatia"));
+        setPrecoTorta(getConfigValor(data, "precoTorta"));
         setFatiasPerBolo(getConfigValor(data, "fatiasPerBolo"));
       }
     };
@@ -143,6 +153,7 @@ export default function App() {
       setOutrosItens(dados.outrosItens || []);
       setPrecoBolo(getConfigValor(configs, "precoBolo"));
       setPrecoFatia(getConfigValor(configs, "precoFatia"));
+      setPrecoTorta(getConfigValor(configs, "precoTorta"));
       setFatiasPerBolo(getConfigValor(configs, "fatiasPerBolo"));
     };
 
@@ -786,9 +797,32 @@ export default function App() {
     );
   };
 
+  const vendaPagamento = Object.fromEntries(vendas.map(v => [String(v.id), v.pago || false]));
+
+  const handleTogglePagamento = (vendaId) => {
+    const venda = vendas.find(v => String(v.id) === String(vendaId));
+    if (!venda) return;
+    setVendaPagamentoConfirmacao(venda);
+    setConfirmacaoPagamentoOpen(true);
+  };
+
+  const confirmarPagamento = async () => {
+    const venda = vendaPagamentoConfirmacao;
+    if (!venda) return;
+    const novoPago = !(venda.pago || false);
+    const vendaAtualizada = { ...venda, pago: novoPago };
+    setVendas(prev => prev.map(v => String(v.id) === String(venda.id) ? vendaAtualizada : v));
+    setConfirmacaoPagamentoOpen(false);
+    setVendaPagamentoConfirmacao(null);
+    await salvarItensNoFirebase(
+      [{ coll: "vendas", item: vendaAtualizada }],
+      "atualizar pagamento no Firebase"
+    );
+  };
+
   const salvarConfigsVendas = async () => {
-    if (!precoBolo && !precoFatia) {
-      setAlertMessage("Configure pelo menos o preço do bolo ou da fatia.");
+    if (!precoBolo && !precoFatia && !precoTorta) {
+      setAlertMessage("Configure pelo menos o preço do bolo, da fatia ou da torta.");
       setAlertOpen(true);
       return;
     }
@@ -796,6 +830,7 @@ export default function App() {
     const configs = [
       precoBolo && { chave: "precoBolo", valor: parseNumero(precoBolo) },
       precoFatia && { chave: "precoFatia", valor: parseNumero(precoFatia) },
+      precoTorta && { chave: "precoTorta", valor: parseNumero(precoTorta) },
       fatiasPerBolo && { chave: "fatiasPerBolo", valor: parseNumero(fatiasPerBolo) },
     ].filter(Boolean);
 
@@ -812,6 +847,7 @@ export default function App() {
     setVendaEditandoId(null);
     setQtdVenda("");
     setValorVenda("");
+    setDescricaoOutrosVenda("");
     setAnotacaoVenda("");
     setDataVenda(formatarDataLocal());
   };
@@ -853,7 +889,7 @@ export default function App() {
         setAlertOpen(true);
         return null;
       }
-    } else {
+    } else if (tipoVenda === "bolo") {
       precoAplicado = valorInformado > 0 ? valorInformado : parseNumero(precoBolo);
       origemPreco = valorInformado > 0 ? "manual" : "config";
 
@@ -865,6 +901,36 @@ export default function App() {
         setAlertOpen(true);
         return null;
       }
+    } else if (tipoVenda === "torta") {
+      precoAplicado = valorInformado > 0 ? valorInformado : parseNumero(precoTorta);
+      origemPreco = valorInformado > 0 ? "manual" : "config";
+
+      if (precoAplicado > 0) {
+        valorFinal = qtd * precoAplicado;
+        descricao = `${qtd} torta(s) @ R$ ${precoAplicado.toFixed(2)} / torta${origemPreco === "manual" ? " (valor informado)" : ""}`;
+      } else {
+        setAlertMessage("Configure o preço padrão da torta ou informe o valor por torta nesta venda.");
+        setAlertOpen(true);
+        return null;
+      }
+    } else if (tipoVenda === "outros") {
+      const descricaoLimpa = (descricaoOutrosVenda || "").trim();
+      if (!descricaoLimpa) {
+        setAlertMessage("Informe a descrição da venda.");
+        setAlertOpen(true);
+        return null;
+      }
+      precoAplicado = valorInformado;
+      if (precoAplicado <= 0) {
+        setAlertMessage("Informe o valor para esta venda.");
+        setAlertOpen(true);
+        return null;
+      }
+      valorFinal = qtd * precoAplicado;
+      descricao = qtd > 1
+        ? `${qtd}× ${descricaoLimpa} @ R$ ${precoAplicado.toFixed(2)}`
+        : `${descricaoLimpa} — R$ ${precoAplicado.toFixed(2)}`;
+      origemPreco = "manual";
     }
 
     return {
@@ -874,6 +940,7 @@ export default function App() {
       precoUnitario: precoAplicado,
       origemPreco,
       descricao,
+      ...(tipoVenda === "outros" && { descricaoOutros: (descricaoOutrosVenda || "").trim() }),
       anotacao: anotacaoVenda || "",
       data: dataInputParaISO(dataVenda),
     };
@@ -883,8 +950,15 @@ export default function App() {
     const dadosVenda = montarDadosVenda();
     if (!dadosVenda) return;
 
+    setDadosVendaConfirmacao(dadosVenda);
+    setConfirmacaoVendaOpen(true);
+  };
+
+  const confirmarRegistroVenda = async () => {
+    if (!dadosVendaConfirmacao) return;
+
     if (vendaEditandoId !== null) {
-      const vendaAtualizada = { ...dadosVenda, id: vendaEditandoId };
+      const vendaAtualizada = { ...dadosVendaConfirmacao, id: vendaEditandoId };
       setVendas(prev => prev.map(v => String(v.id) === String(vendaEditandoId) ? vendaAtualizada : v));
       await salvarItensNoFirebase(
         [{ coll: "vendas", item: vendaAtualizada }],
@@ -892,7 +966,7 @@ export default function App() {
       );
     } else {
       const vendaId = createId();
-      const vendaComId = { ...dadosVenda, id: vendaId };
+      const vendaComId = { ...dadosVendaConfirmacao, id: vendaId };
       setVendas(prev => [...prev, vendaComId]);
       await salvarItensNoFirebase(
         [{ coll: "vendas", item: vendaComId }],
@@ -902,6 +976,8 @@ export default function App() {
 
     limparFormularioVenda();
     setShowNovaVenda(false);
+    setConfirmacaoVendaOpen(false);
+    setDadosVendaConfirmacao(null);
   };
 
   const editarVenda = (venda) => {
@@ -915,6 +991,7 @@ export default function App() {
     setTipoVenda(venda.tipo || "fatias");
     setQtdVenda(String(venda.quantidade || ""));
     setValorVenda(precoUnitarioVenda > 0 ? String(precoUnitarioVenda) : "");
+    setDescricaoOutrosVenda(venda.descricaoOutros || "");
     setAnotacaoVenda(venda.anotacao || "");
     setDataVenda(isoParaDataInput(venda.data));
     setShowNovaVenda(true);
@@ -1264,11 +1341,29 @@ export default function App() {
 
             <div className="card border border-rose-200/80 bg-white/95">
               <h2 className="font-bold text-xl mb-4 text-rose-950">🥄 Ingredientes</h2>
+              {ingredientes.length > 0 && (
+                <div className="mb-4">
+                  <input
+                    type="text"
+                    className="input border-2 border-rose-200 focus:border-rose-700"
+                    placeholder="🔍 Buscar ingrediente..."
+                    value={buscaIngredientes}
+                    onChange={e => setBuscaIngredientes(e.target.value)}
+                    disabled={isBusy}
+                  />
+                </div>
+              )}
               {ingredientes.length === 0 ? (
                 <p className="text-sm text-gray-400 text-center py-8">Nenhum ingrediente cadastrado</p>
               ) : (
                 <div className="space-y-3">
-                  {ingredientes.map((i) => {
+                  {ingredientes
+                    .filter((i) => {
+                      const busca = buscaIngredientes.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+                      const nome = (i.nome || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+                      return nome.includes(busca);
+                    })
+                    .map((i) => {
                     const custo = custoMedio(i.id);
                     const isPeso = i.unidade === "kg" || i.unidade === "g";
                     const displayCusto = i.unidade === "g" ? custo * 1000 : custo;
@@ -1526,6 +1621,8 @@ export default function App() {
               setPrecoBolo={setPrecoBolo}
               precoFatia={precoFatia}
               setPrecoFatia={setPrecoFatia}
+              precoTorta={precoTorta}
+              setPrecoTorta={setPrecoTorta}
               fatiasPerBolo={fatiasPerBolo}
               setFatiasPerBolo={setFatiasPerBolo}
               onSalvarConfigsVendas={salvarConfigsVendas}
@@ -1539,12 +1636,16 @@ export default function App() {
               setValorVenda={setValorVenda}
               anotacaoVenda={anotacaoVenda}
               setAnotacaoVenda={setAnotacaoVenda}
+              descricaoOutrosVenda={descricaoOutrosVenda}
+              setDescricaoOutrosVenda={setDescricaoOutrosVenda}
               dataVenda={dataVenda}
               setDataVenda={setDataVenda}
               vendaEditandoId={vendaEditandoId}
               onSubmitVenda={registrarVenda}
               onCancelVenda={cancelarFormularioVenda}
               vendas={vendas}
+              vendaPagamento={vendaPagamento}
+              onTogglePagamento={handleTogglePagamento}
               onEditarVenda={editarVenda}
               onRemoverVenda={removerVenda}
               isBusy={isBusy}
@@ -1615,6 +1716,49 @@ export default function App() {
             <button disabled={isBusy} className="btn btn-primary" onClick={adicionarOutroItemNaReceitaExec}>✅ Adicionar</button>
           </div>
         </div>
+      </Modal>
+
+      <Modal isOpen={confirmacaoVendaOpen} onClose={() => setConfirmacaoVendaOpen(false)} title="✅ Confirmar Venda">
+        {dadosVendaConfirmacao && (
+          <div className="space-y-4">
+            <div className="bg-rose-50 p-4 rounded-lg border border-rose-200">
+              <p className="text-sm text-gray-600 mb-2">Resumo da venda:</p>
+              <p className="font-bold text-lg text-rose-950">{dadosVendaConfirmacao.descricao}</p>
+              <div className="mt-3 space-y-1">
+                <p className="text-sm"><strong>Data:</strong> {formatarDataBR(dadosVendaConfirmacao.data)}</p>
+                <p className="text-sm"><strong>Valor:</strong> <span className="text-rose-900 font-bold">{formatarMoeda(dadosVendaConfirmacao.valor)}</span></p>
+                {dadosVendaConfirmacao.anotacao && <p className="text-sm"><strong>Anotação:</strong> {dadosVendaConfirmacao.anotacao}</p>}
+              </div>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-3 sm:justify-end pt-4 border-t border-gray-200">
+              <button disabled={isBusy} className="btn bg-gray-200 text-gray-700 hover:bg-gray-300" onClick={() => setConfirmacaoVendaOpen(false)}>Cancelar</button>
+              <button disabled={isBusy} className="btn btn-primary" onClick={confirmarRegistroVenda}>✓ Confirmar Venda</button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal isOpen={confirmacaoPagamentoOpen} onClose={() => setConfirmacaoPagamentoOpen(false)} title="💳 Confirmar Pagamento">
+        {vendaPagamentoConfirmacao && (
+          <div className="space-y-4">
+            <div className="bg-rose-50 p-4 rounded-lg border border-rose-200">
+              <p className="text-sm text-gray-600 mb-2">
+                {vendaPagamentoConfirmacao.pago ? "Desmarcar este pagamento?" : "Confirmar recebimento do pagamento?"}
+              </p>
+              <p className="font-bold text-rose-950">{vendaPagamentoConfirmacao.descricao}</p>
+              <div className="mt-2 space-y-1">
+                <p className="text-sm"><strong>Data:</strong> {formatarDataBR(vendaPagamentoConfirmacao.data)}</p>
+                <p className="text-sm"><strong>Valor:</strong> <span className="text-rose-900 font-bold">{formatarMoeda(vendaPagamentoConfirmacao.valor)}</span></p>
+              </div>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-3 sm:justify-end pt-4 border-t border-gray-200">
+              <button disabled={isBusy} className="btn bg-gray-200 text-gray-700 hover:bg-gray-300" onClick={() => setConfirmacaoPagamentoOpen(false)}>Cancelar</button>
+              <button disabled={isBusy} className="btn btn-primary" onClick={confirmarPagamento}>
+                {vendaPagamentoConfirmacao.pago ? "Desmarcar" : "✓ Confirmar Pago"}
+              </button>
+            </div>
+          </div>
+        )}
       </Modal>
 
       <Modal isOpen={confirmOpen} onClose={fecharConfirmacao} title="⚠️ Confirmação">
