@@ -70,6 +70,11 @@ export default function SalesPanel({
 
   const totalVendas = vendas.reduce((sum, v) => sum + parseNumero(v.valor), 0);
 
+  const valorPendente = vendas.reduce((sum, v) => {
+    const pago = vendaPagamento[v.id] || false;
+    return pago ? sum : sum + parseNumero(v.valor);
+  }, 0);
+
   const formatarDescricaoVenda = (venda) => {
     if (!venda.descricao) return venda.descricao;
     let desc = venda.descricao;
