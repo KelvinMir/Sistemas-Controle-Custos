@@ -15,6 +15,7 @@ import SalesPanel from "./components/SalesPanel";
 import PriceHistory from "./components/PriceHistory";
 import PeriodComparison from "./components/PeriodComparison";
 import IngredientCategories from "./components/IngredientCategories";
+import AiAssistantScreen from "./AI/aiAssistantScreen";
 import sunflowerIcon from "./img/sunflower-svgrepo-com.svg";
 import { dataInputParaISO, formatarDataBR, formatarDataLocal, isoParaDataInput } from "./utils/dates";
 import { comprasDoIngrediente, estatisticasCompras, formatarMoeda } from "./utils/analytics";
@@ -32,6 +33,11 @@ export default function App() {
   const [nomeReceita, setNomeReceita] = useState("");
   const [ingredienteReceitaId, setIngredienteReceitaId] = useState("");
   const [qtdIngredienteReceita, setQtdIngredienteReceita] = useState("");
+  const [subReceitaId, setSubReceitaId] = useState("");
+  const [qtdSubReceita, setQtdSubReceita] = useState("");
+  const [novaReceitaFatias, setNovaReceitaFatias] = useState("10");
+  const [editandoNomeReceitaId, setEditandoNomeReceitaId] = useState(null);
+  const [editandoNomeReceitaValor, setEditandoNomeReceitaValor] = useState("");
   
   // Outros itens - catálogo
   const [outrosItens, setOutrosItens] = useState([]);
@@ -61,6 +67,9 @@ export default function App() {
   const [compraModalQtd, setCompraModalQtd] = useState("");
   const [compraModalPrecoTotal, setCompraModalPrecoTotal] = useState("");
   const [compraModalAviso, setCompraModalAviso] = useState("");
+  const [compraModalData, setCompraModalData] = useState(formatarDataLocal());
+  const [compraEditandoId, setCompraEditandoId] = useState(null);
+  const [compraEditandoData, setCompraEditandoData] = useState(null);
 
   const [usarModalOpen, setUsarModalOpen] = useState(false);
   const [usarModalIngrediente, setUsarModalIngrediente] = useState(null);
@@ -106,6 +115,8 @@ export default function App() {
   const [anotacaoVenda, setAnotacaoVenda] = useState("");
   const [dataVenda, setDataVenda] = useState(formatarDataLocal()); // YYYY-MM-DD
 
+  const [filtroDataInicioCompras, setFiltroDataInicioCompras] = useState("");
+  const [filtroDataFimCompras, setFiltroDataFimCompras] = useState("");
 
 
   useEffect(() => {
@@ -588,8 +599,45 @@ export default function App() {
     setCompraModalPrecoUnit(dados.precoUnit || "");
     setCompraModalQtd(dados.qtd || "");
     setCompraModalPrecoTotal(dados.precoTotal || "");
+    setCompraModalData(dados.data || formatarDataLocal());
     setCompraModalAviso(dados.aviso || "");
     setTimeout(() => setCompraModalOpen(true), 0);
+  };
+
+  const abrirModalEditarCompra = (compra) => {
+    const ingrediente = ingredientes.find(i => String(i.id) === String(compra.ingredienteId));
+    if (!ingrediente) return;
+
+    const precoUnit = compra.quantidade > 0 ? compra.preco / compra.quantidade : 0;
+    
+    setCompraEditandoId(compra.id);
+    setCompraEditandoData(compra.data);
+    setCompraModalIngrediente(ingrediente);
+    setCompraModalPrecoUnit(precoUnit ? precoUnit.toFixed(2) : "");
+    setCompraModalQtd(compra.quantidade.toString());
+    setCompraModalPrecoTotal(compra.preco.toFixed(2));
+    setCompraModalData(isoParaDataInput(compra.data));
+    setCompraModalAviso("Editando esta compra");
+    setTimeout(() => setCompraModalOpen(true), 0);
+  };
+
+  const deletarCompra = (compra) => {
+    setConfirmMessage(`Tem certeza que deseja excluir a compra de "${compra.nome}" de ${formatarDataBR(compra.data)}?`);
+    setConfirmAction("delete-purchase");
+    setConfirmData({ compraId: compra.id });
+    setTimeout(() => setConfirmOpen(true), 0);
+  };
+
+  const fecharModalCompra = () => {
+    setCompraModalOpen(false);
+    setCompraEditandoId(null);
+    setCompraEditandoData(null);
+    setCompraModalIngrediente(null);
+    setCompraModalPrecoUnit("");
+    setCompraModalQtd("");
+    setCompraModalPrecoTotal("");
+    setCompraModalData(formatarDataLocal());
+    setCompraModalAviso("");
   };
 
   const registrarCompra = (ingrediente) => {
@@ -615,22 +663,39 @@ export default function App() {
     let qtdArmazenada = qtd;
     if (ingrediente.unidade === "g") qtdArmazenada = qtd / 1000;
 
-    const novaCompra = {
+    const compraData = {
       ingredienteId: ingrediente.id,
       nome: ingrediente.nome,
       preco: precoFinal,
       quantidade: qtdArmazenada,
-      data: new Date().toISOString()
+      data: dataInputParaISO(compraModalData)
     };
-    const compraId = createId();
-    const compraComId = { ...novaCompra, id: compraId };
-    setCompras(prev => [...prev, compraComId]);
-    setCompraModalOpen(false);
 
-    await salvarItensNoFirebase(
-      [{ coll: "compras", item: compraComId }],
-      "salvar compra no Firebase"
-    );
+    if (compraEditandoId) {
+      // Edição de compra existente
+      const compraAtualizada = { ...compraData, id: compraEditandoId };
+      setCompras(prev => prev.map(c => String(c.id) === String(compraEditandoId) ? compraAtualizada : c));
+      
+      await salvarItensNoFirebase(
+        [{ coll: "compras", item: compraAtualizada }],
+        "atualizar compra no Firebase"
+      );
+      
+      setCompraEditandoId(null);
+      setCompraEditandoData(null);
+    } else {
+      // Criação de nova compra
+      const compraId = createId();
+      const compraComId = { ...compraData, id: compraId };
+      setCompras(prev => [...prev, compraComId]);
+
+      await salvarItensNoFirebase(
+        [{ coll: "compras", item: compraComId }],
+        "salvar compra no Firebase"
+      );
+    }
+    
+    setCompraModalOpen(false);
   };
 
   const custoMedio = (ingredienteId) => {
@@ -644,7 +709,12 @@ export default function App() {
 
   const unidadeReceita = (unidadeIngrediente) => unidadeIngrediente === "g" ? "kg" : unidadeIngrediente;
 
-  const calcularCustoItemReceita = (item) => {
+  const calcularCustoItemReceita = (item, visitados = new Set()) => {
+    if (item.tipo === "sub-receita") {
+      const custoSubReceita = calcularCustoReceita(item.subReceitaId, visitados);
+      return Number(item.qtd || 1) * custoSubReceita;
+    }
+
     if (item.tipo === "outro") {
       const custoCalculado = Number(item.qtd || 1) * Number(item.custoUnitario || 0);
       if (custoCalculado > 0) return custoCalculado;
@@ -659,12 +729,15 @@ export default function App() {
     return Number(item.custo || 0);
   };
 
-  const calcularCustoReceita = (receitaId) => {
+  const calcularCustoReceita = (receitaId, visitados = new Set()) => {
+    if (visitados.has(String(receitaId))) return 0;
+    const visitadosAtual = new Set(visitados);
+    visitadosAtual.add(String(receitaId));
     const receitaIdComparacao = String(receitaId);
 
     return receita
       .filter(item => String(item.receitaId ?? receitaPadraoIdAtual) === receitaIdComparacao)
-      .reduce((acc, item) => acc + calcularCustoItemReceita(item), 0);
+      .reduce((acc, item) => acc + calcularCustoItemReceita(item, visitadosAtual), 0);
   };
 
   const salvarItemReceita = async (ingrediente, quantidadeInformada) => {
@@ -746,6 +819,84 @@ export default function App() {
     }
   };
 
+  const adicionarSubReceitaNaReceita = async () => {
+    if (!receitaSelecionada) {
+      setAlertMessage("Selecione uma receita antes de adicionar uma sub-receita.");
+      setAlertOpen(true);
+      return;
+    }
+    if (!subReceitaId) {
+      setAlertMessage("Selecione uma receita para adicionar.");
+      setAlertOpen(true);
+      return;
+    }
+    if (String(subReceitaId) === String(receitaSelecionadaIdAtual)) {
+      setAlertMessage("Não é possível adicionar uma receita a si mesma.");
+      setAlertOpen(true);
+      return;
+    }
+    const subReceita = receitas.find(r => String(r.id) === String(subReceitaId));
+    if (!subReceita) return;
+
+    const multiplicador = Math.max(0.01, parseNumero(qtdSubReceita) || 1);
+    const custoSubReceita = calcularCustoReceita(subReceita.id);
+    const custoItem = multiplicador * custoSubReceita;
+
+    const novoItem = {
+      receitaId: receitaSelecionada.id,
+      receitaNome: receitaSelecionada.nome,
+      tipo: "sub-receita",
+      subReceitaId: subReceita.id,
+      nome: subReceita.nome,
+      qtd: multiplicador,
+      unidade: "receita",
+      custoUnitario: custoSubReceita,
+      custo: custoItem,
+      data: new Date().toISOString()
+    };
+
+    const itemId = createId();
+    const itemComId = { ...novoItem, id: itemId };
+    setReceita(prev => [...prev, itemComId]);
+    await salvarItensNoFirebase(
+      [{ coll: "receita", item: itemComId }],
+      "salvar sub-receita no Firebase"
+    );
+    setSubReceitaId("");
+    setQtdSubReceita("");
+  };
+
+  const atualizarFatiasReceita = async (novasFatias) => {
+    if (!receitaSelecionada) return;
+    const fatias = Math.max(1, Number(novasFatias) || 1);
+    const receitaAtualizada = { ...receitaSelecionada, fatias };
+    setReceitas(prev => prev.map(r => String(r.id) === String(receitaSelecionada.id) ? receitaAtualizada : r));
+    await salvarItensNoFirebase(
+      [{ coll: "receitas", item: receitaAtualizada }],
+      "atualizar fatias da receita"
+    );
+  };
+
+  const salvarEdicaoNomeReceita = async () => {
+    const novoNome = editandoNomeReceitaValor.trim();
+    if (!novoNome || !editandoNomeReceitaId) {
+      setEditandoNomeReceitaId(null);
+      return;
+    }
+    const receitaAlvo = receitas.find(r => String(r.id) === String(editandoNomeReceitaId));
+    if (!receitaAlvo) { setEditandoNomeReceitaId(null); return; }
+    const receitaAtualizada = { ...receitaAlvo, nome: novoNome };
+    setReceitas(prev => prev.map(r => String(r.id) === String(editandoNomeReceitaId) ? receitaAtualizada : r));
+    setReceita(prev => prev.map(item =>
+      String(item.receitaId) === String(editandoNomeReceitaId) ? { ...item, receitaNome: novoNome } : item
+    ));
+    setEditandoNomeReceitaId(null);
+    await salvarItensNoFirebase(
+      [{ coll: "receitas", item: receitaAtualizada }],
+      "atualizar nome da receita"
+    );
+  };
+
   const removerDaReceita = async (itemId) => {
     const removeu = await executarOperacaoBanco("remover item da receita no Firebase", () =>
       deleteFromFirestore("receita", itemId)
@@ -783,6 +934,7 @@ export default function App() {
     const novaReceita = {
       id: createId(),
       nome: nomeNormalizado,
+      fatias: Math.max(1, Number(novaReceitaFatias) || 10),
       data: new Date().toISOString(),
     };
     const receitaComId = novaReceita;
@@ -790,6 +942,7 @@ export default function App() {
     setReceitas(prev => [...prev, receitaComId]);
     setReceitaSelecionadaId(receitaComId.id);
     setNomeReceita("");
+    setNovaReceitaFatias("10");
 
     await salvarItensNoFirebase(
       [{ coll: "receitas", item: receitaComId }],
@@ -1069,6 +1222,23 @@ export default function App() {
       }
 
       setVendas(prev => prev.filter(v => String(v.id) !== String(vendaId)));
+    } else if (confirmAction === "delete-purchase" && confirmData) {
+      const { compraId } = confirmData;
+      const removeu = await executarOperacaoBanco("remover compra no Firebase", () =>
+        deleteFromFirestore("compras", compraId)
+      );
+
+      if (!removeu) {
+        fecharConfirmacao();
+        return;
+      }
+
+      setCompras(prev => prev.filter(c => String(c.id) !== String(compraId)));
+      if (String(compraEditandoId) === String(compraId)) {
+        setCompraEditandoId(null);
+        setCompraEditandoData(null);
+        setCompraModalOpen(false);
+      }
     } else if (confirmAction === "delete-recipe" && confirmData) {
       const { receitaId } = confirmData;
       const receitaIdComparacao = String(receitaId);
@@ -1163,6 +1333,21 @@ export default function App() {
     ? unidadeReceita(ingredienteReceitaSelecionado.unidade)
     : "";
 
+  const subReceitaSelecionada = receitas.find(r => String(r.id) === String(subReceitaId));
+  const qtdSubReceitaNumero = Math.max(0.01, parseNumero(qtdSubReceita) || 1);
+  const custoPrevistoSubReceita = subReceitaSelecionada
+    ? qtdSubReceitaNumero * calcularCustoReceita(subReceitaSelecionada.id)
+    : 0;
+  const subReceitasOptions = receitas
+    .filter(r => String(r.id) !== String(receitaSelecionadaIdAtual))
+    .map(r => ({
+      value: r.id,
+      label: r.nome,
+      description: `R$ ${calcularCustoReceita(r.id).toFixed(2)} total`,
+    }));
+  const fatiasReceita = Number(receitaSelecionada?.fatias) || 10;
+  const custoPorFatia = fatiasReceita > 0 ? custoTotal / fatiasReceita : 0;
+
   const inicioSemana = new Date();
   inicioSemana.setDate(inicioSemana.getDate() - 7);
 
@@ -1213,6 +1398,15 @@ export default function App() {
               onClick={() => setPaginaAtiva("historico")}
             >
               Histórico de compras
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={paginaAtiva === "ia"}
+              className={`page-tab ${paginaAtiva === "ia" ? "is-active" : ""}`}
+              onClick={() => setPaginaAtiva("ia")}
+            >
+              ✨ Análise IA
             </button>
           </div>
 
@@ -1397,14 +1591,45 @@ export default function App() {
                 <p className="text-sm font-bold text-rose-900 shrink-0">Custo: R$ {custoTotal.toFixed(2)}</p>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 mb-4">
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-3 mb-4">
                 <input disabled={isBusy} className="input border-2 border-rose-200 focus:border-rose-700" placeholder="Nome da receita" value={nomeReceita} onChange={e => setNomeReceita(e.target.value)} />
-                <button disabled={isBusy} onClick={criarReceita} className="btn btn-primary">+ Receita</button>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-gray-600">Fatias</label>
+                  <input
+                    disabled={isBusy}
+                    type="number"
+                    min="1"
+                    className="input border-2 border-rose-200 focus:border-rose-700 w-20 text-center"
+                    placeholder="10"
+                    value={novaReceitaFatias}
+                    onChange={e => setNovaReceitaFatias(e.target.value)}
+                  />
+                </div>
+                <button disabled={isBusy} onClick={criarReceita} className="btn btn-primary self-end">+ Receita</button>
               </div>
 
               <div className="flex gap-2 overflow-x-auto pb-2 mb-4">
                 {receitas.map((r) => {
                   const selecionada = String(r.id) === String(receitaSelecionadaIdAtual);
+                  const editando = String(r.id) === String(editandoNomeReceitaId);
+
+                  if (editando) {
+                    return (
+                      <input
+                        key={`edit-${r.id}`}
+                        autoFocus
+                        disabled={isBusy}
+                        className="small-btn shrink-0 bg-white border-2 border-rose-700 text-rose-950 font-semibold rounded-md px-2 py-1 text-sm focus:outline-none min-w-[100px]"
+                        value={editandoNomeReceitaValor}
+                        onChange={e => setEditandoNomeReceitaValor(e.target.value)}
+                        onBlur={salvarEdicaoNomeReceita}
+                        onKeyDown={e => {
+                          if (e.key === "Enter") salvarEdicaoNomeReceita();
+                          if (e.key === "Escape") setEditandoNomeReceitaId(null);
+                        }}
+                      />
+                    );
+                  }
 
                   return (
                     <button
@@ -1412,6 +1637,11 @@ export default function App() {
                       type="button"
                       disabled={isBusy}
                       onClick={() => setReceitaSelecionadaId(r.id)}
+                      onDoubleClick={() => {
+                        setEditandoNomeReceitaId(r.id);
+                        setEditandoNomeReceitaValor(r.nome);
+                      }}
+                      title="Clique duplo para renomear"
                       className={`small-btn shrink-0 ${selecionada ? "bg-rose-900 text-white hover:bg-rose-950" : "bg-rose-100 text-rose-900 hover:bg-rose-200"}`}
                     >
                       {r.nome}
@@ -1424,12 +1654,27 @@ export default function App() {
                 <div className="border border-rose-100 bg-rose-50/70 rounded-lg p-3 sm:p-4 mb-4">
                   <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 mb-3">
                     <div>
-                      <h4 className="font-bold text-sm text-rose-950">Adicionar ingrediente em {receitaSelecionada.nome}</h4>
+                      <h4 className="font-bold text-sm text-rose-950">Adicionar em {receitaSelecionada.nome}</h4>
                       <p className="text-xs text-gray-500 mt-1">O custo usa o custo médio atual do ingrediente.</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex items-center gap-1.5 bg-white rounded-md px-2 py-1 border border-rose-100">
+                        <span className="text-xs text-gray-500">Fatias:</span>
+                        <input
+                          type="number"
+                          min="1"
+                          disabled={isBusy}
+                          className="w-12 text-xs font-bold text-rose-900 text-center border-0 bg-transparent p-0 focus:outline-none focus:ring-0"
+                          key={receitaSelecionada.id}
+                          defaultValue={Number(receitaSelecionada.fatias) || 10}
+                          onBlur={e => atualizarFatiasReceita(e.target.value)}
+                        />
+                      </div>
                       <span className="text-xs font-bold text-rose-900 bg-white rounded-md px-2 py-1 border border-rose-100 w-fit">
                         Total: R$ {custoTotal.toFixed(2)}
+                      </span>
+                      <span className="text-xs text-rose-700 bg-rose-50 rounded-md px-2 py-1 border border-rose-100 w-fit">
+                        R$ {custoPorFatia.toFixed(2)} / fatia
                       </span>
                       <button
                         type="button"
@@ -1486,6 +1731,52 @@ export default function App() {
                       + Ingrediente
                     </button>
                   </div>
+
+                  {receitas.length > 1 && (
+                    <div className="mt-3 pt-3 border-t border-rose-100">
+                      <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,0.9fr)_auto] gap-3 items-end">
+                        <div>
+                          <label className="text-xs font-semibold text-gray-600 block mb-1">Sub-receita</label>
+                          <PrettySelect
+                            disabled={isBusy}
+                            value={subReceitaId}
+                            onChange={setSubReceitaId}
+                            options={subReceitasOptions}
+                            placeholder="Selecione uma receita"
+                            emptyMessage="Nenhuma outra receita cadastrada"
+                            ariaLabel="Sub-receita"
+                            buttonClassName="border-2 border-rose-200 focus:border-rose-700"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-xs font-semibold text-gray-600 block mb-1">Quantidade (padrão: 1)</label>
+                          <input
+                            type="text"
+                            disabled={isBusy}
+                            className="input border-2 border-rose-200 focus:border-rose-700"
+                            placeholder="1"
+                            value={qtdSubReceita}
+                            onChange={e => setQtdSubReceita(e.target.value)}
+                          />
+                        </div>
+
+                        <div className="min-h-[2.75rem] rounded-lg border border-rose-100 bg-white px-3 py-2 flex flex-col justify-center">
+                          <span className="text-[11px] font-semibold text-gray-500">Custo previsto</span>
+                          <span className="text-sm font-bold text-rose-950">R$ {custoPrevistoSubReceita.toFixed(2)}</span>
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={adicionarSubReceitaNaReceita}
+                          className="btn btn-primary md:min-w-36"
+                        >
+                          + Sub-receita
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1497,6 +1788,7 @@ export default function App() {
                 <div className="space-y-2">
                   {itensReceitaSelecionada.map((r) => {
                     const isOutroItem = r.tipo === "outro";
+                    const isSubReceita = r.tipo === "sub-receita";
                     const custoItem = calcularCustoItemReceita(r);
                     const ingredienteAtual = ingredientes.find(i => String(i.id) === String(r.ingredienteId));
                     const custoUnitarioAtual = ingredienteAtual ? custoMedio(ingredienteAtual.id) : r.custoUnitario;
@@ -1506,10 +1798,17 @@ export default function App() {
                     return (
                       <div key={`rec-${r.id}`} className="border-b border-rose-100 pb-3 last:border-b-0 hover:bg-rose-50 p-3 rounded-lg transition flex flex-col sm:flex-row lg:flex-col xl:flex-row gap-3 justify-between items-stretch sm:items-center lg:items-stretch xl:items-center">
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-gray-800 break-words">{r.nome}</p>
+                          <p className="text-sm font-semibold text-gray-800 break-words">
+                            {isSubReceita && <span className="mr-1">🧁</span>}{r.nome}
+                            {isSubReceita && <span className="ml-1.5 text-xs font-normal text-rose-600 bg-rose-100 px-1.5 py-0.5 rounded">sub-receita</span>}
+                          </p>
                           <p className="text-xs text-gray-500 mt-1 break-words">
-                            {isOutroItem ? "Outro item" : `${r.qtd} ${unidadeItem}`} • Custo: <span className="font-semibold text-rose-900">R$ {custoItem.toFixed(2)}</span>
-                            {custoUnitarioAtual > 0 && <span> • Base R$ {Number(custoUnitarioAtual).toFixed(2)} / {unidadeItem}</span>}
+                            {isSubReceita
+                              ? <>{Number(r.qtd) === 1 ? "Receita completa" : `${Number(r.qtd).toFixed(2)}× receita`}</>
+                              : isOutroItem ? "Outro item" : `${r.qtd} ${unidadeItem}`
+                            }
+                            {" "}• Custo: <span className="font-semibold text-rose-900">R$ {custoItem.toFixed(2)}</span>
+                            {!isSubReceita && custoUnitarioAtual > 0 && <span> • Base R$ {Number(custoUnitarioAtual).toFixed(2)} / {unidadeItem}</span>}
                             {isOutroItem && quantidadeItem > 1 && <span> • {quantidadeItem} un</span>}
                           </p>
                         </div>
@@ -1653,22 +1952,44 @@ export default function App() {
 
           </aside>
         </div>
-        ) : (
+        ) : paginaAtiva === "historico" ? (
           <PurchaseHistory
             ingredientes={ingredientes}
             compras={compras}
             ingredienteSelecionadoId={ingredienteHistoricoSelecionadoId}
             onSelectIngrediente={setIngredienteHistoricoId}
+            onEditarCompra={abrirModalEditarCompra}
+            onDeletarCompra={deletarCompra}
+            dataInicio={filtroDataInicioCompras}
+            dataFim={filtroDataFimCompras}
+            onDataInicioChange={setFiltroDataInicioCompras}
+            onDataFimChange={setFiltroDataFimCompras}
+          />
+        ) : (
+          <AiAssistantScreen
+            vendas={vendas}
+            custoPorFatia={custoPorFatia}
+            custoTotalReceita={custoTotal}
           />
         )}
       </main>
-      <Modal isOpen={compraModalOpen} onClose={() => setCompraModalOpen(false)} title={compraModalIngrediente ? `💳 Registrar compra — ${compraModalIngrediente.nome}` : 'Registrar compra'}>
+      <Modal isOpen={compraModalOpen} onClose={fecharModalCompra} title={compraModalIngrediente ? `💳 ${compraEditandoId ? 'Editar' : 'Registrar'} compra — ${compraModalIngrediente.nome}` : 'Registrar compra'}>
         <div className="space-y-4">
           {compraModalAviso && (
             <p className="text-sm font-semibold text-rose-900 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2">
               {compraModalAviso}
             </p>
           )}
+          <div>
+            <label className="text-sm font-bold text-gray-700 block mb-2">Data da compra</label>
+            <input 
+              disabled={isBusy} 
+              type="date"
+              className="input border-2 border-rose-200 focus:border-rose-700 w-full" 
+              value={compraModalData} 
+              onChange={e => setCompraModalData(e.target.value)} 
+            />
+          </div>
           <div>
             <label className="text-sm font-bold text-gray-700 block mb-2">{labelPrecoPorUnidade(compraModalIngrediente?.unidade)} (opcional)</label>
             <input disabled={isBusy} className="input border-2 border-rose-200 focus:border-rose-700" value={compraModalPrecoUnit} onChange={e => setCompraModalPrecoUnit(e.target.value)} placeholder={`R$ / ${compraModalIngrediente?.unidade === 'kg' || compraModalIngrediente?.unidade === 'g' ? 'kg' : compraModalIngrediente?.unidade || 'unidade'}`} />
@@ -1682,8 +2003,8 @@ export default function App() {
             <input disabled={isBusy} className="input border-2 border-rose-200 focus:border-rose-700" value={compraModalPrecoTotal} onChange={e => setCompraModalPrecoTotal(e.target.value)} placeholder="Valor total pago" />
           </div>
           <div className="flex flex-col sm:flex-row gap-3 sm:justify-end pt-4 border-t border-gray-200">
-            <button disabled={isBusy} className="btn bg-gray-200 text-gray-700 hover:bg-gray-300" onClick={() => setCompraModalOpen(false)}>Cancelar</button>
-            <button disabled={isBusy} className="btn btn-primary" onClick={registrarCompraExec}>✅ Salvar compra</button>
+            <button disabled={isBusy} className="btn bg-gray-200 text-gray-700 hover:bg-gray-300" onClick={fecharModalCompra}>Cancelar</button>
+            <button disabled={isBusy} className="btn btn-primary" onClick={registrarCompraExec}>✅ {compraEditandoId ? 'Atualizar' : 'Salvar'} compra</button>
           </div>
         </div>
       </Modal>

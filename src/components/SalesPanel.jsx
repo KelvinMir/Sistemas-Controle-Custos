@@ -80,7 +80,6 @@ export default function SalesPanel({
     let desc = venda.descricao;
     const qtd = parseNumero(venda.quantidade || 0);
     
-    // Remover (s) e ajustar para singular/plural correto
     desc = desc.replace(/fatia\(s\)/g, qtd === 1 ? "fatia" : "fatias");
     desc = desc.replace(/torta\(s\)/g, qtd === 1 ? "torta" : "tortas");
     desc = desc.replace(/item\(ns\)/g, qtd === 1 ? "item" : "itens");
@@ -90,7 +89,6 @@ export default function SalesPanel({
 
   return (
     <>
-      {/* Configurar Vendas Card */}
       <div className="card sales-config-card">
         <button
           type="button"
@@ -133,7 +131,6 @@ export default function SalesPanel({
         )}
       </div>
 
-      {/* Nova Venda Card */}
       {showNovaVenda ? (
         <div className="card sales-entry-card">
           <div className="sales-entry-card__header">
@@ -188,7 +185,7 @@ export default function SalesPanel({
 
             <label className="sales-form__field">
               <span>
-                {tipoVenda === "bolo" ? "Valor por kg" : tipoVenda === "outros" ? "Valor unitário" : "Valor da Torta"}
+                {tipoVenda === "bolo" ? "Valor por kg" : tipoVenda === "torta" ? "Valor da Torta" : tipoVenda === "outros" ? "Valor unitário" : "Valor da Fatia"}
               </span>
               <input
                 id="valorVendaManual"
@@ -229,9 +226,7 @@ export default function SalesPanel({
         <button disabled={isBusy} onClick={() => setShowNovaVenda(true)} className="btn btn-primary sales-new-sale-button shadow-md">+ Nova Venda</button>
       )}
 
-      {/* Vendas Realizadas Card */}
       <div className="card sales-list-card">
-        {/* Header com resumo */}
         <div className="sales-list-header">
           <div className="sales-list-title-section">
             <h3>📋 Vendas Realizadas</h3>

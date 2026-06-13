@@ -14,6 +14,12 @@ export default function PurchaseHistory({
   compras,
   ingredienteSelecionadoId,
   onSelectIngrediente,
+  onEditarCompra,
+  onDeletarCompra,
+  dataInicio = "",
+  dataFim = "",
+  onDataInicioChange = () => {},
+  onDataFimChange = () => {},
 }) {
   const ingredienteSelecionado = ingredientes.find(
     (ingrediente) => String(ingrediente.id) === String(ingredienteSelecionadoId)
@@ -21,7 +27,19 @@ export default function PurchaseHistory({
 
   const ingredienteIdAtual = ingredienteSelecionado?.id ?? "";
   const unidadeAtual = unidadeParaCompra(ingredienteSelecionado);
-  const comprasDoIngrediente = obterComprasDoIngrediente(compras, ingredienteIdAtual);
+  let comprasDoIngrediente = obterComprasDoIngrediente(compras, ingredienteIdAtual);
+
+  // Filtrar por data se fornecidas
+  if (dataInicio || dataFim) {
+    comprasDoIngrediente = comprasDoIngrediente.filter((compra) => {
+      const dataCompra = compra.data ? new Date(compra.data).toISOString().split("T")[0] : null;
+      if (!dataCompra) return true;
+      
+      if (dataInicio && dataCompra < dataInicio) return false;
+      if (dataFim && dataCompra > dataFim) return false;
+      return true;
+    });
+  }
 
   const opcoesIngredientes = ingredientes.map((ingrediente) => {
     const totalCompras = compras.filter(
@@ -72,6 +90,27 @@ export default function PurchaseHistory({
           </div>
         </div>
 
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+          <div>
+            <label className="text-xs font-semibold text-gray-600 block mb-1">Data início</label>
+            <input
+              type="date"
+              value={dataInicio}
+              onChange={(e) => onDataInicioChange(e.target.value)}
+              className="w-full px-3 py-2 border-2 border-rose-200 focus:border-rose-700 rounded-md text-sm focus:outline-none transition-colors"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-600 block mb-1">Data fim</label>
+            <input
+              type="date"
+              value={dataFim}
+              onChange={(e) => onDataFimChange(e.target.value)}
+              className="w-full px-3 py-2 border-2 border-rose-200 focus:border-rose-700 rounded-md text-sm focus:outline-none transition-colors"
+            />
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mt-5">
           <div className="purchase-stat">
             <span>Total gasto</span>
@@ -118,7 +157,7 @@ export default function PurchaseHistory({
                 const precoUnitario = precoUnitarioCompra(compra);
 
                 return (
-                  <div key={`hist-compra-${compra.id}`} className="purchase-row">
+                  <div key={`hist-compra-${compra.id}`} className="purchase-row group">
                     <div className="min-w-0">
                       <p className="font-bold text-gray-800 break-words">{formatarDataBR(compra.data) || "Sem data"}</p>
                       <p className="text-xs text-gray-500 mt-1">
@@ -134,6 +173,26 @@ export default function PurchaseHistory({
                         <span>Valor pago</span>
                         <strong>{formatarMoeda(precoTotal)}</strong>
                       </div>
+                    </div>
+                    <div className="flex gap-2 ml-auto">
+                      {onEditarCompra && (
+                        <button
+                          onClick={() => onEditarCompra(compra)}
+                          className="px-2 py-1 text-xs font-semibold bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-md transition-all opacity-0 group-hover:opacity-100"
+                          title="Editar compra"
+                        >
+                          ✏️ Editar
+                        </button>
+                      )}
+                      {onDeletarCompra && (
+                        <button
+                          onClick={() => onDeletarCompra(compra)}
+                          className="px-2 py-1 text-xs font-semibold bg-red-100 text-red-700 hover:bg-red-200 rounded-md transition-all opacity-0 group-hover:opacity-100"
+                          title="Deletar compra"
+                        >
+                          🗑️ Deletar
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
