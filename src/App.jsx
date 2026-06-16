@@ -950,6 +950,36 @@ export default function App() {
     );
   };
 
+  const copiarReceita = async () => {
+    if (!receitaSelecionada) return;
+    const novaReceita = {
+      id: createId(),
+      nome: `${receitaSelecionada.nome} (Cópia)`,
+      fatias: receitaSelecionada.fatias || 10,
+      data: new Date().toISOString(),
+    };
+    const itensOriginais = receita.filter(item =>
+      String(item.receitaId ?? receitaPadraoIdAtual) === String(receitaSelecionada.id)
+    );
+    const novosItens = itensOriginais.map(item => ({
+      ...item,
+      id: createId(),
+      receitaId: novaReceita.id,
+      receitaNome: novaReceita.nome,
+      data: new Date().toISOString(),
+    }));
+    setReceitas(prev => [...prev, novaReceita]);
+    setReceita(prev => [...prev, ...novosItens]);
+    setReceitaSelecionadaId(novaReceita.id);
+    await salvarItensNoFirebase(
+      [
+        { coll: "receitas", item: novaReceita },
+        ...novosItens.map(item => ({ coll: "receita", item })),
+      ],
+      "copiar receita no Firebase"
+    );
+  };
+
   const vendaPagamento = Object.fromEntries(vendas.map(v => [String(v.id), v.pago || false]));
 
   const handleTogglePagamento = (vendaId) => {
@@ -1297,16 +1327,25 @@ export default function App() {
   const vendaTotal = vendas.reduce((acc, v) => acc + v.valor, 0);
   const lucro = vendaTotal - custoTotal;
   const ticketMedio = vendas.length > 0 ? vendaTotal / vendas.length : 0;
-  const margemLucro = vendaTotal > 0 ? (lucro / vendaTotal) * 100 : 0;
+  const fatiasReceita = Number(receitaSelecionada?.fatias) || 10;
+  const precoFatiaParsed = parseNumero(precoFatia) || 0;
+  const vendaPresumidaReceita = precoFatiaParsed * fatiasReceita;
+  const margemLucro = vendaPresumidaReceita > 0
+    ? ((vendaPresumidaReceita - custoTotal) / vendaPresumidaReceita) * 100
+    : vendaTotal > 0 ? ((vendaTotal - custoTotal) / vendaTotal) * 100 : 0;
   const resumoReceitas = receitas.map((r) => {
     const itens = receita.filter(item =>
       String(item.receitaId ?? receitaPadraoIdAtual) === String(r.id)
     );
-
+    const custo = calcularCustoReceita(r.id);
+    const fatias = Number(r.fatias) || 10;
+    const vendaPresumida = precoFatiaParsed * fatias;
+    const margem = vendaPresumida > 0 ? ((vendaPresumida - custo) / vendaPresumida) * 100 : null;
     return {
       ...r,
-      custo: calcularCustoReceita(r.id),
+      custo,
       totalItens: itens.length,
+      margem,
     };
   });
   const custoCatalogoReceitas = resumoReceitas.reduce((acc, r) => acc + r.custo, 0);
@@ -1345,7 +1384,6 @@ export default function App() {
       label: r.nome,
       description: `R$ ${calcularCustoReceita(r.id).toFixed(2)} total`,
     }));
-  const fatiasReceita = Number(receitaSelecionada?.fatias) || 10;
   const custoPorFatia = fatiasReceita > 0 ? custoTotal / fatiasReceita : 0;
 
   const inicioSemana = new Date();
@@ -1676,6 +1714,20 @@ export default function App() {
                       <span className="text-xs text-rose-700 bg-rose-50 rounded-md px-2 py-1 border border-rose-100 w-fit">
                         R$ {custoPorFatia.toFixed(2)} / fatia
                       </span>
+                      {vendaPresumidaReceita > 0 && (
+                        <span className={`text-xs font-bold rounded-md px-2 py-1 border w-fit ${margemLucro >= 0 ? "text-green-700 bg-green-50 border-green-100" : "text-red-700 bg-red-50 border-red-100"}`}>
+                          Margem: {margemLucro.toFixed(1)}%
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={copiarReceita}
+                        className="small-btn bg-blue-100 text-blue-700 hover:bg-blue-200 font-semibold text-xs rounded-md"
+                        aria-label={`Copiar receita ${receitaSelecionada.nome}`}
+                      >
+                        📋 Copiar
+                      </button>
                       <button
                         type="button"
                         disabled={isBusy}

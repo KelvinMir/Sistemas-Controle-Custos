@@ -32,7 +32,7 @@ export default function FinancialSummary({
             <p className="font-bold break-words">R$ {ticketMedio.toFixed(2)}</p>
           </div>
           <div className="bg-white/10 rounded-lg p-2 border border-white/10 min-w-0">
-            <p className="text-rose-100 text-xs">Margem estimada</p>
+            <p className="text-rose-100 text-xs">Margem da receita</p>
             <p className="font-bold break-words">{margemLucro.toFixed(1)}%</p>
           </div>
         </div>
@@ -64,7 +64,7 @@ export default function FinancialSummary({
                 </span>
                 <span className={selecionada ? "text-xs text-gray-500" : "text-xs text-white/70"}>
                   {r.totalItens} {r.totalItens === 1 ? "ingrediente" : "ingredientes"}
-                </span>
+                    </span>
               </button>
             );
           })}
