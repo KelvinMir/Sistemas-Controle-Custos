@@ -20,6 +20,7 @@ import sunflowerIcon from "./img/sunflower-svgrepo-com.svg";
 import { dataInputParaISO, formatarDataBR, formatarDataLocal, isoParaDataInput } from "./utils/dates";
 import { comprasDoIngrediente, estatisticasCompras, formatarMoeda } from "./utils/analytics";
 import { parseNumero } from "./utils/numbers";
+import { FaPlus, FaTrash } from "react-icons/fa";
 
 
 export default function App() {
@@ -1539,7 +1540,7 @@ export default function App() {
                         <input
                           disabled={isBusy}
                           id="usePrecoPorUnidade"
-                          type="checkbox"
+                          type="checkbox"Vendas Rea
                           checked={usePrecoPorUnidade}
                           onChange={e => setUsePrecoPorUnidade(e.target.checked)}
                           className="price-mode-option__input"
@@ -1608,10 +1609,8 @@ export default function App() {
                           <p className="text-xs text-gray-500 mt-1 break-words">📊 Custo: R$ <span className="font-semibold text-rose-900">{displayCusto.toFixed(2)}</span> / {displayUnidade}</p>
                         </div>
                         <div className="grid grid-cols-4 gap-2 sm:flex sm:items-center sm:ml-4 shrink-0">
-                          <button disabled={isBusy} onClick={() => registrarCompra(i)} className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 font-semibold text-xs rounded-md" aria-label={`Registrar compra de ${i.nome}`}>💳</button>
-                          <button disabled={isBusy} onClick={() => adicionarNaReceita(i)} className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 font-semibold text-xs rounded-md" aria-label={`Usar ${i.nome} na receita`}>✅</button>
-                          <button disabled={isBusy} onClick={() => editarIngrediente(i)} className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-200 font-semibold text-xs rounded-md" aria-label={`Editar ${i.nome}`}>✏️</button>
-                          <button disabled={isBusy} onClick={() => removerIngrediente(i)} className="small-btn bg-red-100 text-red-700 hover:bg-red-200 font-semibold text-xs rounded-md" aria-label={`Remover ${i.nome}`}>🗑️</button>
+                          <button disabled={isBusy} onClick={() => registrarCompra(i)} className="small-btn bg-rose-100 text-rose-900 hover:bg-rose-700 font-semibold text-xs rounded-md" aria-label={`Registrar compra de ${i.nome}`}><FaPlus size={18} color="#059669"/></button>
+                          <button disabled={isBusy} onClick={() => removerIngrediente(i)} className="small-btn bg-red-100 text-red-700 font-semibold text-xs rounded-md" aria-label={`Remover ${i.nome}`}><FaTrash size={18} color="#dc2626"/></button>
                         </div>
                       </div>
                     );
