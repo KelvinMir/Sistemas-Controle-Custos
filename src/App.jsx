@@ -1540,7 +1540,7 @@ export default function App() {
                         <input
                           disabled={isBusy}
                           id="usePrecoPorUnidade"
-                          type="checkbox"Vendas Rea
+                          type="checkbox"
                           checked={usePrecoPorUnidade}
                           onChange={e => setUsePrecoPorUnidade(e.target.checked)}
                           className="price-mode-option__input"
